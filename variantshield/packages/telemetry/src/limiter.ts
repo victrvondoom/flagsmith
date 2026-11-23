@@ -27,4 +27,12 @@ export class RateLimiter {
     }
     return Math.ceil((cost - b.tokens) / this.refillPerMs);
   }
+
+  /** Milliseconds until `cost` tokens would be available, without consuming any. 0 when a call would be allowed. */
+  peek(key: string, nowMs: number, cost = 1): number {
+    const b = this.buckets.get(key);
+    if (!b) return 0;
+    const tokens = Math.min(this.capacity, b.tokens + (nowMs - b.updatedMs) * this.refillPerMs);
+    return tokens >= cost ? 0 : Math.ceil((cost - tokens) / this.refillPerMs);
+  }
 }

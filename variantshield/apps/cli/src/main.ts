@@ -9,6 +9,7 @@ import { environmentFingerprint, parseContract, parseManifestText, type Contract
  *   contract register --file x.yaml                          publish a new immutable contract version
  *   contract check    --contract id [--version N] [--json]   re-verify with Flagsmith, persist findings, set the exit code
  *   contract report   --contract id [--version N] [--json]   read-only report
+ *   contract surface-keys --contract id [--json]          per-surface reporting keys (secrets: give each surface only its own)
  *   env-fingerprint <flagsmith client key>                   value for experiment.environment_fingerprint
  *
  * Exit codes: 0 ok · 1 invalid contract or contract violation · 2 usage / connection / auth error · 3 incomplete or no data (use --allow-incomplete to treat as ok)
@@ -19,6 +20,7 @@ const USAGE = `Usage:
   variantshield contract register --file <manifest> [--json]
   variantshield contract check    --contract <id> [--version <n>] [--allow-incomplete] [--json]
   variantshield contract report   --contract <id> [--version <n>] [--json]
+  variantshield contract surface-keys --contract <id> [--version <n>] [--json]   (prints secrets)
   variantshield env-fingerprint <flagsmith client-side environment key>
 
 Environment: VARIANTSHIELD_URL, VARIANTSHIELD_ADMIN_TOKEN
@@ -69,7 +71,7 @@ async function api(method: string, path: string, body: unknown, o: Out): Promise
 function describeReport(r: any): string {
   const rep = r.report;
   const lines = [`${rep.contractId} v${rep.version}: ${rep.status}${rep.primaryCode ? ` (${rep.primaryCode})` : ""}${r.source === "simulation" ? "  [SIMULATION]" : ""}`,
-    `Observations: ${rep.linkedObservations} linked, ${rep.unlinkedObservations} unlinked; subjects: ${rep.subjects.length}`, "", "Surface".padEnd(18) + "Status".padEnd(12) + "Subjects".padEnd(10) + "Errors".padEnd(8) + "Warnings"];
+    `Observations: ${rep.linkedObservations} linked, ${rep.unlinkedObservations} unlinked; subjects: ${r.subjectsTotal ?? rep.subjects.length}${r.subjectsTotal > rep.subjects.length ? ` (showing ${rep.subjects.length}, violations first)` : ""}`, "", "Surface".padEnd(18) + "Status".padEnd(12) + "Subjects".padEnd(10) + "Errors".padEnd(8) + "Warnings"];
   for (const s of rep.surfaces) lines.push(s.id.padEnd(18) + s.status.padEnd(12) + String(s.subjects).padEnd(10) + String(s.errors).padEnd(8) + s.warnings);
   const shown = rep.findings.filter((f: any) => f.severity !== "info").slice(0, 12);
   if (shown.length) lines.push("", `Findings (${rep.findings.filter((f: any) => f.severity !== "info").length}):`);
@@ -88,7 +90,7 @@ async function main(argv: string[]): Promise<void> {
     console.log(environmentFingerprint(key));
     return;
   }
-  if (group !== "contract" || !sub || !["validate", "register", "check", "report"].includes(sub)) return fail(2, USAGE);
+  if (group !== "contract" || !sub || !["validate", "register", "check", "report", "surface-keys"].includes(sub)) return fail(2, USAGE);
   let values: Record<string, string | boolean | undefined>;
   try {
     values = parseArgs({ args: rest, options: { file: { type: "string" }, contract: { type: "string" }, version: { type: "string" }, json: { type: "boolean", default: false }, "allow-incomplete": { type: "boolean", default: false } }, strict: true }).values;
@@ -117,6 +119,13 @@ async function main(argv: string[]): Promise<void> {
 
   if (typeof values.contract !== "string") return fail(2, "--contract is required", o);
   const id = encodeURIComponent(values.contract);
+  if (sub === "surface-keys") {
+    const r = await api("GET", `/api/contracts/${id}/surface-keys${version}`, undefined, o);
+    if (r.status !== 200) return fail(r.status === 404 ? 2 : 1, `${r.json?.error?.code ?? r.status}: ${r.json?.error?.message ?? "request failed"}`, o);
+    const map = Object.fromEntries((r.json.keys as { surfaceId: string; key: string }[]).map((k) => [k.surfaceId, k.key]));
+    print(o, `# Secrets. Give each surface only its own key. SURFACE_KEYS='${JSON.stringify(map)}'`, { contractId: r.json.contractId, version: r.json.version, keys: map });
+    return;
+  }
   const res = sub === "check" ? await api("POST", `/api/contracts/${id}/check${version}`, undefined, o) : await api("GET", `/api/contracts/${id}/report${version}`, undefined, o);
   if (res.status !== 200) return fail(res.status === 404 ? 2 : 1, `${res.json?.error?.code ?? res.status}: ${res.json?.error?.message ?? "request failed"}`, o);
   print(o, describeReport(res.json), res.json);

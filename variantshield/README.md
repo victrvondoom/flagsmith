@@ -68,7 +68,7 @@ Declare how one experiment must behave across web, mobile, payment and risk serv
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 222 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `npm test` | 248 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
 | `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
 | `npm run surfaces` | four sample surfaces (web, mobile simulator, payment API, risk engine) on :8801-8804 |
 | `npm run demo:contracts` | live contract demo: healthy, bad combination, stale variant |
@@ -80,14 +80,14 @@ Declare how one experiment must behave across web, mobile, payment and risk serv
 
 ## Configuration
 
-Copy [`.env.example`](.env.example). Required in production: `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`, `VARIANTSHIELD_IDENTITY_SECRET`, `VARIANTSHIELD_IDENTITY_ISSUER_KEY`. For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
+Copy [`.env.example`](.env.example). Required in production (24+ random characters each; weak values are refused): `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`, `VARIANTSHIELD_IDENTITY_SECRET`, `VARIANTSHIELD_IDENTITY_ISSUER_KEY`. Optional: `VARIANTSHIELD_VIEWER_TOKEN`, `VARIANTSHIELD_IDENTITY_TOKEN_SECRET`, `VARIANTSHIELD_TRUST_PROXY`, `VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT`, `VARIANTSHIELD_HISTORY_RETENTION_DAYS`. Surfaces use per-surface keys (`variantshield contract surface-keys`). For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
 
 ## Verification status (what was actually run)
 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 222 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, CLI 12, surfaces 8, contract UI journey 1 (includes the Integration page) |
+| 248 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 26, CLI 12, surfaces 8, contract UI journey 1 (includes the Integration page) |
 | Cross-surface contract demo against real Flagsmith (pre-restart run) | healthy contract, combination violation and stale-variant mismatch detected as expected; 12 subjects re-verified against Flagsmith |
 | Assignment-config drift on real Flagsmith | **not run live**; covered by tests against a fake Flagsmith only |
 | Environment mismatch live | only simulation and tests (one real Flagsmith environment available) |

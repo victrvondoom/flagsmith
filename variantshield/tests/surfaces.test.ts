@@ -1,3 +1,4 @@
+import { deriveSurfaceKey } from "../apps/api/src/surface-keys.ts";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -33,7 +34,7 @@ beforeEach(async () => {
   assert.equal((await adminCall("POST", "/api/contracts", parseYaml(readFileSync(EXAMPLE_MANIFEST, "utf8")))).status, "created");
   surfaces = [];
   for (const def of SURFACES) {
-    const { server } = createSurface({ def, flagsmith: new FlagsmithClient({ baseUrl: fake.url, environmentKey: fake.environmentKey }), environmentKey: fake.environmentKey, environmentName: "production", variantshieldUrl: apiUrl, ingestKey: INGEST, contractId: "checkout-journey", contractVersion: 1, experimentKey: "checkout_journey", assignmentFlag: "checkout_journey_variant", controlKey: KEY });
+    const { server } = createSurface({ def, flagsmith: new FlagsmithClient({ baseUrl: fake.url, environmentKey: fake.environmentKey }), environmentKey: fake.environmentKey, environmentName: "production", variantshieldUrl: apiUrl, surfaceKey: deriveSurfaceKey(INGEST, "checkout-journey", def.id), contractId: "checkout-journey", contractVersion: 1, experimentKey: "checkout_journey", assignmentFlag: "checkout_journey_variant", controlKey: KEY });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     surfaces.push({ id: def.id, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => new Promise((r) => server.close(() => r())) });
   }

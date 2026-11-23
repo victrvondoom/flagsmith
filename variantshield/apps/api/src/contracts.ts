@@ -70,6 +70,7 @@ export function registerContract(ctx: Ctx, input: unknown, actor: string, opts: 
   if (prev && contract.version < prev.contract.version) throw new HttpError(409, "version_not_increasing", `Contract ${contract.id} already has v${prev.contract.version}; new versions must be higher.`);
   if (prev && prev.isSimulation !== Boolean(opts.simulation)) throw new HttpError(409, "source_mismatch", "A contract id cannot switch between simulation and real");
   ctx.db.run("INSERT INTO contracts (contract_id, version, manifest, manifest_hash, is_simulation, created_at, created_by) VALUES (?,?,?,?,?,?,?)", contract.id, contract.version, canonicalJson(contract), hash, opts.simulation ? 1 : 0, ctx.now(), actor);
+  invalidateReports(ctx, contract.id);
   const drift = prev ? diffContracts(prev.contract, contract) : [];
   const source = opts.simulation ? "simulation" : "real";
   for (const d of drift) insertDrift(ctx, contract.id, prev!.contract.version, contract.version, d, source);
@@ -80,19 +81,24 @@ export function registerContract(ctx: Ctx, input: unknown, actor: string, opts: 
 
 export function issueIdentity(ctx: Ctx, body: unknown): { subjectRef: string; token: string; kind: string; expiresAt: number } {
   if (typeof body !== "object" || body === null) throw new HttpError(400, "invalid_body", "Body must be a JSON object");
-  const b = body as { subject?: unknown; anonymousId?: unknown; ttlSeconds?: unknown };
+  const b = body as { subject?: unknown; anonymousId?: unknown; ttlSeconds?: unknown; audience?: unknown };
+  if (b.audience !== undefined && (typeof b.audience !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(b.audience))) throw new HttpError(400, "validation_failed", "audience must be a contract id (lowercase slug)");
   const kind = b.anonymousId !== undefined ? "anonymous" : "authenticated";
   const raw = kind === "anonymous" ? b.anonymousId : b.subject;
   const check = validateRawSubject(raw);
   if (!check.ok) throw new HttpError(400, "invalid_subject", check.reason);
   const ttl = Math.min(3600, Math.max(60, typeof b.ttlSeconds === "number" ? Math.floor(b.ttlSeconds) : 900));
   const subjectRef = deriveSubjectRef(ctx.cfg.identitySecret, kind, check.subject);
-  const token = issueIdentityToken(ctx.cfg.identitySecret, subjectRef, kind, ctx.now(), ttl);
+  // Tokens are signed with a key separate from the pseudonym key, so the token key can be rotated without re-bucketing customers.
+  const token = issueIdentityToken(ctx.cfg.identityTokenSecret, subjectRef, kind, ctx.now(), ttl, typeof b.audience === "string" ? b.audience : undefined);
   return { subjectRef, token, kind, expiresAt: ctx.now() + ttl * 1000 };
 }
 
-export function verifyIdentity(ctx: Ctx, token: unknown): { valid: boolean; subjectRef?: string; kind?: string; expiresAt?: number; reason?: string } {
-  const r = verifyIdentityToken(ctx.cfg.identitySecret, token, ctx.now());
+const tokenKeys = (ctx: Ctx): string[] => [ctx.cfg.identityTokenSecret, ...ctx.cfg.identityTokenPrevious];
+
+export function verifyIdentity(ctx: Ctx, token: unknown, audience?: unknown): { valid: boolean; subjectRef?: string; kind?: string; expiresAt?: number; reason?: string } {
+  if (audience !== undefined && (typeof audience !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(audience))) throw new HttpError(400, "validation_failed", "audience must be a contract id (lowercase slug)");
+  const r = verifyIdentityToken(tokenKeys(ctx), token, ctx.now(), 30, typeof audience === "string" ? audience : undefined);
   return r.ok ? { valid: true, subjectRef: r.sub, kind: r.kind, expiresAt: r.expiresAtMs } : { valid: false, reason: r.reason };
 }
 
@@ -109,13 +115,28 @@ function parseTs(v: unknown): number | null {
   return null;
 }
 
-export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?: boolean } = {}): { accepted: number; duplicate: number; rejected: number; unlinked: number; results: ObservationResult[] } {
+/** Observations may be at most this far ahead of the server clock. Surfaces' own clocks are not trusted beyond it. */
+export const MAX_FUTURE_SKEW_MS = 60_000;
+const OBS_KEY_SEP = "|";
+const obsKey = (contractId: string, surfaceId: string, observationId: string): string => `${contractId}${OBS_KEY_SEP}${surfaceId}${OBS_KEY_SEP}${observationId}`;
+
+export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?: boolean; bound?: { contractId: string; surfaceId: string } | null; charge?: (units: number) => void } = {}): { accepted: number; duplicate: number; rejected: number; unlinked: number; results: ObservationResult[] } {
   if (!Array.isArray(batch) || batch.length === 0) throw new HttpError(400, "validation_failed", "observations must be a non-empty array");
   if (batch.length > MAX_OBSERVATION_BATCH) throw new HttpError(400, "validation_failed", `at most ${MAX_OBSERVATION_BATCH} observations per request`);
   const out = { accepted: 0, duplicate: 0, rejected: 0, unlinked: 0, results: [] as ObservationResult[] };
+  opts.charge?.(batch.length);
   const now = ctx.now();
+  if (!opts.simulation) {
+    // Storage is bounded per contract, so a flood of observations cannot fill the disk.
+    const contractsInBatch = [...new Set(batch.map((b) => (typeof b === "object" && b !== null ? String((b as Record<string, unknown>).contractId) : "")))];
+    for (const cid of contractsInBatch) {
+      const n = Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_observations WHERE contract_id = ? AND source = 'real'", cid)?.n ?? 0);
+      if (n + batch.length > ctx.cfg.maxObservationsPerContract) throw new HttpError(429, "observation_quota_exceeded", `Contract ${cid.slice(0, 64)} holds ${n} observations; the limit is ${ctx.cfg.maxObservationsPerContract}. Older data is purged by retention.`, { retryAfterMs: 60_000 });
+    }
+  }
   const retentionMs = ctx.cfg.retentionDays * 86_400_000;
   const contractCache = new Map<string, StoredContract | null>();
+  const touched = new Set<string>();
 
   batch.forEach((raw, index) => {
     const issues: string[] = [];
@@ -131,7 +152,7 @@ export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?
     const fp = o.envFingerprint === undefined || o.envFingerprint === null ? null : typeof o.envFingerprint === "string" && /^[a-f0-9]{8,64}$/.test(o.envFingerprint) ? o.envFingerprint : (issues.push("envFingerprint must be lowercase hex"), null);
     const ts = parseTs(o.observedAt);
     if (ts === null || ts < 1_577_836_800_000) issues.push("observedAt must be epoch ms or ISO-8601 after 2020");
-    else if (ts > now + 300_000) issues.push("observedAt is in the future");
+    else if (ts > now + MAX_FUTURE_SKEW_MS) issues.push("observedAt is in the future");
     else if (ts < now - retentionMs) issues.push("observedAt is older than the retention window");
     const features: Record<string, FeatureValue> = {};
     if (typeof o.features !== "object" || o.features === null || Array.isArray(o.features)) issues.push("features must be an object of feature -> value");
@@ -143,6 +164,7 @@ export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?
     for (const k of Object.keys(o)) if (!["observationId", "contractId", "contractVersion", "experimentKey", "environment", "envFingerprint", "assignmentFlag", "assignedVariant", "surfaceId", "identityToken", "observedAt", "features"].includes(k)) issues.push(`unknown field "${k}"${/email|name|phone|ip|user/i.test(k) ? " (personal data is not accepted)" : ""}`);
     if (issues.length || !observationId || !contractId || !experimentKey || !environment || !assignmentFlag || !surfaceId) return reject(observationId);
 
+    if (opts.bound && (contractId !== opts.bound.contractId || surfaceId !== opts.bound.surfaceId)) { issues.push(`this key may only report as ${opts.bound.contractId}/${opts.bound.surfaceId}`); return reject(observationId); }
     const cacheKey = `${contractId}:${version}`;
     if (!contractCache.has(cacheKey)) { const r = ctx.db.get("SELECT * FROM contracts WHERE contract_id = ? AND version = ?", contractId, version as number); contractCache.set(cacheKey, r ? rowToStored(r) : null); }
     const stored = contractCache.get(cacheKey);
@@ -155,34 +177,36 @@ export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?
     if (issues.length) return reject(observationId);
 
     // Identity is only trusted if the signed token verifies; nothing the client says about "who" is believed.
-    const idr = verifyIdentityToken(ctx.cfg.identitySecret, o.identityToken, now);
+    const idr = verifyIdentityToken(tokenKeys(ctx), o.identityToken, now, 30, contractId);
     const subjectRef = idr.ok ? idr.sub : null;
     const obs: ContractObservation = { observationId, contractId, contractVersion: version as number, experimentKey, environment, envFingerprint: fp, assignmentFlag, assignedVariant: variant, surfaceId, subjectRef, identityStatus: idr.ok ? "verified" : "unlinked", identityReason: idr.ok ? null : idr.reason, observedAtMs: ts!, features, source: opts.simulation ? "simulation" : "real" };
     const hash = sha(canonicalJson({ ...obs, identityReason: null }));
     const ins = ctx.db.run(
       `INSERT OR IGNORE INTO contract_observations (observation_id, payload_hash, contract_id, contract_version, experiment_key, environment, env_fingerprint, assignment_flag, assigned_variant, surface_id, subject_ref, identity_status, identity_reason, observed_at, received_at, features, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      observationId, hash, contractId, obs.contractVersion, experimentKey, environment, fp, assignmentFlag, variant, surfaceId, subjectRef, obs.identityStatus, obs.identityReason, ts!, now, JSON.stringify(features), obs.source,
+      obsKey(contractId, surfaceId, observationId), hash, contractId, obs.contractVersion, experimentKey, environment, fp, assignmentFlag, variant, surfaceId, subjectRef, obs.identityStatus, obs.identityReason, ts!, now, JSON.stringify(features), obs.source,
     );
     if (ins.changes === 0) {
-      const prior = ctx.db.get("SELECT payload_hash FROM contract_observations WHERE observation_id = ?", observationId);
+      const prior = ctx.db.get("SELECT payload_hash FROM contract_observations WHERE observation_id = ?", obsKey(contractId, surfaceId, observationId));
       if (String(prior?.payload_hash) === hash) { out.duplicate++; out.results.push({ index, observationId, status: "duplicate", identity: obs.identityStatus }); return; }
       issues.push("observationId already used for a different payload (idempotency conflict)");
       return reject(observationId);
     }
     out.accepted++;
+    touched.add(contractId);
     if (obs.identityStatus === "unlinked") out.unlinked++;
     out.results.push({ index, observationId, status: "accepted", identity: obs.identityStatus });
     if (subjectRef) {
-      const prev = ctx.db.get("SELECT * FROM contract_observations WHERE contract_id = ? AND subject_ref = ? AND surface_id = ? AND observed_at < ? AND observation_id <> ? ORDER BY observed_at DESC LIMIT 1", contractId, subjectRef, surfaceId, ts!, observationId);
+      const prev = ctx.db.get("SELECT * FROM contract_observations WHERE contract_id = ? AND subject_ref = ? AND surface_id = ? AND observed_at < ? AND observation_id <> ? ORDER BY observed_at DESC LIMIT 1", contractId, subjectRef, surfaceId, ts!, obsKey(contractId, surfaceId, observationId));
       if (prev) for (const d of observationDrift(rowToObservation(prev), obs)) insertDrift(ctx, contractId, obs.contractVersion, obs.contractVersion, d, obs.source, `${surfaceId}:${subjectRef}`);
     }
   });
+  for (const cid of touched) invalidateReports(ctx, cid);
   return out;
 }
 
 function rowToObservation(r: Row): ContractObservation {
   return {
-    observationId: String(r.observation_id), contractId: String(r.contract_id), contractVersion: Number(r.contract_version), experimentKey: String(r.experiment_key), environment: String(r.environment),
+    observationId: String(r.observation_id).split(OBS_KEY_SEP).slice(2).join(OBS_KEY_SEP) || String(r.observation_id), contractId: String(r.contract_id), contractVersion: Number(r.contract_version), experimentKey: String(r.experiment_key), environment: String(r.environment),
     envFingerprint: r.env_fingerprint === null ? null : String(r.env_fingerprint), assignmentFlag: String(r.assignment_flag), assignedVariant: r.assigned_variant === null ? null : String(r.assigned_variant),
     surfaceId: String(r.surface_id), subjectRef: r.subject_ref === null ? null : String(r.subject_ref), identityStatus: r.identity_status === "verified" ? "verified" : "unlinked",
     identityReason: r.identity_reason === null ? null : String(r.identity_reason), observedAtMs: Number(r.observed_at), features: j(r.features, {}), source: r.source === "simulation" ? "simulation" : "real",
@@ -205,14 +229,26 @@ export interface ContractReportResponse {
   observedCombinations: { variant: string | null; features: Record<string, FeatureValue>; subjects: number; status: "valid" | "invalid" | "incomplete"; reasons: string[]; constraintIds: string[] }[];
   drift: ReturnType<typeof listDrift>;
   historicalFindings: number;
+  /** The report lists at most MAX_REPORT_SUBJECTS subjects (violating ones first); this is the real count in the window. */
+  subjectsTotal: number;
 }
+
+/** Bounds the response size: a 20k-observation window can contain thousands of subjects. */
+export const MAX_REPORT_SUBJECTS = 500;
 
 function observedCombinations(report: ContractReport): ContractReportResponse["observedCombinations"] {
   const groups = new Map<string, ContractReportResponse["observedCombinations"][number]>();
+  const COMBINATION_CODES = new Set(["COMBINATION_VIOLATION", "UNKNOWN_FEATURE_VALUE", "MISSING_REQUIRED_FEATURE", "UNKNOWN_VARIANT"]);
+  const bySubject = new Map<string, Finding[]>();
+  for (const f of report.findings) {
+    if (f.severity === "info" || f.subjectRef === null || !COMBINATION_CODES.has(f.code)) continue;
+    const b = bySubject.get(f.subjectRef);
+    if (b) b.push(f); else bySubject.set(f.subjectRef, [f]);
+  }
   for (const row of report.subjects) {
     const features: Record<string, FeatureValue> = {};
     for (const cell of row.cells) for (const [k, v] of Object.entries(cell.features)) if (!(k in features)) features[k] = v;
-    const fs = report.findings.filter((f) => f.subjectRef === row.subjectRef && f.severity !== "info" && ["COMBINATION_VIOLATION", "UNKNOWN_FEATURE_VALUE", "MISSING_REQUIRED_FEATURE", "UNKNOWN_VARIANT"].includes(f.code));
+    const fs = bySubject.get(row.subjectRef) ?? [];
     const status = fs.some((f) => f.severity === "error") ? "invalid" : fs.length ? "incomplete" : "valid";
     const key = `${row.referenceVariant}|${JSON.stringify(Object.entries(features).sort())}|${status}`;
     const g = groups.get(key) ?? { variant: row.referenceVariant, features, subjects: 0, status, reasons: [], constraintIds: [] };
@@ -223,18 +259,49 @@ function observedCombinations(report: ContractReport): ContractReportResponse["o
   return [...groups.values()].sort((a, b) => b.subjects - a.subjects);
 }
 
+/**
+ * Evaluation runs on the single request thread, so identical reads are served from a short-lived cache. An entry is reused only
+ * while no observation has been added or removed for the contract (rowid watermark) and for at most REPORT_TTL_MS.
+ */
+const REPORT_TTL_MS = 5_000;
+const reportCache = new Map<string, { at: number; watermark: string; value: ContractReportResponse }>();
+const generations = new Map<string, number>();
+/** Marks every cached report for a contract stale. Called by anything that changes what a report would show. */
+export function invalidateReports(ctx: Ctx, contractId: string): void {
+  const k = `${ctx.db.id}:${contractId}`;
+  generations.set(k, (generations.get(k) ?? 0) + 1);
+}
+export function clearReportCache(): void { reportCache.clear(); generations.clear(); }
+
 export function buildReport(ctx: Ctx, contractId: string, version?: number, canonical?: ReadonlyMap<string, string | null>): ContractReportResponse {
   const stored = getContractVersion(ctx, contractId, version);
-  const c = stored.contract;
   const now = ctx.now();
+  const wm = ctx.db.get("SELECT COUNT(*) AS n, MAX(rowid) AS m FROM contract_observations WHERE contract_id = ?", contractId);
+  const df = ctx.db.get("SELECT COUNT(*) AS n FROM contract_drift WHERE contract_id = ?", contractId);
+  const fn = ctx.db.get("SELECT COUNT(*) AS n FROM contract_findings WHERE contract_id = ?", contractId);
+  const watermark = `${wm?.n}:${wm?.m}:${df?.n}:${fn?.n}:${stored.contract.version}:${generations.get(`${ctx.db.id}:${contractId}`) ?? 0}`;
+  const cacheKey = `${ctx.db.id}:${contractId}:${stored.contract.version}`;
+  const hit = canonical ? undefined : reportCache.get(cacheKey);
+  if (hit && hit.watermark === watermark && now >= hit.at && now - hit.at < REPORT_TTL_MS) return hit.value;
+  const value = computeReport(ctx, contractId, stored, now, canonical);
+  if (!canonical) { if (reportCache.size >= 64) reportCache.delete(reportCache.keys().next().value as string); reportCache.set(cacheKey, { at: now, watermark, value }); }
+  return value;
+}
+
+function computeReport(ctx: Ctx, contractId: string, stored: StoredContract, now: number, canonical?: ReadonlyMap<string, string | null>): ContractReportResponse {
+  const c = stored.contract;
   const obs = loadObservations(ctx, contractId, now - c.freshness.correlationWindowSeconds * 1000, now + 300_000);
   const report = evaluateContract(c, obs, { nowMs: now, ...(canonical ? { canonical } : {}) });
   const versions = ctx.db.all("SELECT version FROM contracts WHERE contract_id = ? ORDER BY version", contractId).map((r) => Number(r.version));
   const features = [...new Set(Object.values(c.variants).flatMap((m) => Object.keys(m)))];
+  const combos = observedCombinations(report);
+  const subjectsTotal = report.subjects.length;
+  const rank = (r: ContractReport["subjects"][number]): number => (r.cells.some((x) => x.state === "violation") ? 0 : r.cells.some((x) => x.state === "warning" || x.state === "missing") ? 1 : 2);
+  const bounded = subjectsTotal > MAX_REPORT_SUBJECTS ? { ...report, subjects: [...report.subjects].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_REPORT_SUBJECTS) } : report;
   return {
-    report, contract: c, source: stored.isSimulation ? "simulation" : "real", versions,
+    report: bounded, contract: c, source: stored.isSimulation ? "simulation" : "real", versions, subjectsTotal,
     combinationMatrix: { features, variants: Object.keys(c.variants), values: c.variants, constraints: c.constraints },
-    observedCombinations: observedCombinations(report),
+    observedCombinations: combos,
     drift: listDrift(ctx, contractId, 100),
     historicalFindings: Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_findings WHERE contract_id = ?", contractId)?.n ?? 0),
   };
@@ -258,15 +325,19 @@ export async function checkContract(ctx: Ctx, contractId: string, version?: numb
     try {
       const subjects = [...new Set(loadObservations(ctx, contractId, now - c.freshness.correlationWindowSeconds * 1000, now + 300_000, 2000).map((o) => o.subjectRef).filter((s): s is string => s !== null))].slice(0, 100);
       canonical = new Map();
-      for (const s of subjects) {
+      // Bounded: at most 50 Flagsmith lookups and 8 s in total, so one check cannot hold the request open indefinitely.
+      const deadline = Date.now() + 8_000;
+      for (const s of subjects.slice(0, 50)) {
+        if (Date.now() > deadline) break;
         const key = `${this_env(ctx)}:${c.experiment.assignmentFlag}:${s}`;
         const hit = canonicalCache.get(key);
         if (hit && now - hit.at < 60_000) { canonical.set(s, hit.variant); continue; }
         const a = await ctx.flagsmith.getIdentityAssignment(s, c.experiment.assignmentFlag);
+        if (canonicalCache.size >= 5000) canonicalCache.delete(canonicalCache.keys().next().value as string);
         canonicalCache.set(key, { at: now, variant: a.variantKey });
         canonical.set(s, a.variantKey);
       }
-      flagsmith.verified = true; flagsmith.subjectsChecked = subjects.length;
+      flagsmith.verified = true; flagsmith.subjectsChecked = canonical.size;
       try {
         const cfg = await ctx.flagsmith.getAssignmentConfig(c.experiment.assignmentFlag);
         flagsmith.configFingerprint = cfg.fingerprint;
@@ -289,6 +360,7 @@ export async function checkContract(ctx: Ctx, contractId: string, version?: numb
   const built = buildReport(ctx, contractId, version, canonical);
   let newFindings = 0, updated = 0;
   ctx.db.tx(() => { for (const f of built.report.findings) { if (f.severity === "info") continue; if (persistFinding(ctx, f, source)) newFindings++; else updated++; } });
+  invalidateReports(ctx, contractId);
   return { ...built, persisted: { newFindings, updated, newDrift }, flagsmith, drift: listDrift(ctx, contractId, 100), historicalFindings: Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_findings WHERE contract_id = ?", contractId)?.n ?? 0) };
 }
 const this_env = (ctx: Ctx): string => ctx.cfg.flagsmith.environmentKey?.slice(0, 6) ?? "none";

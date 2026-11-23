@@ -24,9 +24,15 @@ export function evaluateContract(contract: Contract, observations: readonly Cont
 
   const inWindow = observations.filter((o) => o.contractId === contract.id && o.observedAtMs > windowStart && surfaceIds.has(o.surfaceId));
   const findings: Finding[] = [];
+  // Index by subject+surface so building each cell is O(its own findings), not O(all findings).
+  const bySubjectSurface = new Map<string, Finding[]>();
   const add = (f: Omit<Finding, "contractVersion" | "dedupeKey"> & { key?: string }): void => {
     const { key, ...rest } = f;
-    findings.push({ ...rest, contractVersion: contract.version, dedupeKey: `${contract.id}:${contract.version}:${f.code}:${f.surfaceId ?? "-"}:${f.subjectRef ?? "-"}:${short(key ?? `${f.expected}|${f.actual}`)}` });
+    const made: Finding = { ...rest, contractVersion: contract.version, dedupeKey: `${contract.id}:${contract.version}:${f.code}:${f.surfaceId ?? "-"}:${f.subjectRef ?? "-"}:${short(key ?? `${f.expected}|${f.actual}`)}` };
+    findings.push(made);
+    const idx = `${f.subjectRef ?? ""}|${f.surfaceId ?? ""}`;
+    const bucket = bySubjectSurface.get(idx);
+    if (bucket) bucket.push(made); else bySubjectSurface.set(idx, [made]);
   };
 
   // Observations whose identity could not be verified are never guessed into a subject.
@@ -137,7 +143,7 @@ export function evaluateContract(contract: Contract, observations: readonly Cont
         continue;
       }
       const codes = cellCodes.get(`${subject}|${s.id}`) ?? [];
-      const sev = findings.filter((f) => f.subjectRef === subject && f.surfaceId === s.id).map((f) => f.severity);
+      const sev = (bySubjectSurface.get(`${subject}|${s.id}`) ?? []).map((f) => f.severity);
       cells.push({ surfaceId: s.id, state: sev.includes("error") ? "violation" : sev.includes("warning") ? "warning" : "ok", variant: o.assignedVariant, environment: o.environment, envFingerprint: o.envFingerprint, features: o.features, observedAtMs: o.observedAtMs, codes });
     }
     rows.push({ subjectRef: subject, referenceVariant: reference, canonicalVariant: canonical, cells });

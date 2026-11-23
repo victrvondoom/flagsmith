@@ -1,0 +1,29 @@
+name: VariantShield CodeQL
+on:
+  pull_request:
+    paths: ["variantshield/**", ".github/workflows/variantshield-codeql.yml"]
+  push:
+    branches: [main]
+    paths: ["variantshield/**"]
+  schedule:
+    - cron: "17 4 * * 1"
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config: |
+            paths:
+              - variantshield
+            paths-ignore:
+              - variantshield/node_modules
+      - uses: github/codeql-action/analyze@v3

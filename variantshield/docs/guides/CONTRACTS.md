@@ -31,8 +31,12 @@ A customer must not get unrelated assignments because they hit different surface
 
 1. A trusted backend (your auth layer) calls `POST /api/identity/issue` with `X-Identity-Issuer-Key` and an **internal opaque id** (emails are rejected). It gets back a pseudonymous `subjectRef` (`sub_…`, an HMAC of the id) and a short-lived signed token (`vsid1.…`).
 2. Every surface uses `subjectRef` as the **Flagsmith identity**. Same identity + same environment + stable configuration = same assignment, because Flagsmith's bucketing is deterministic.
-3. Surfaces forward the token server-to-server and attach it to each observation. VariantShield verifies the signature and expiry; an unverifiable token makes the observation `IDENTITY_UNLINKED`. A bare id or header is never trusted.
+3. Surfaces forward the token server-to-server and attach it to each observation. Pass `audience: "<contract id>"` when issuing to scope a token to one contract. VariantShield verifies the signature, expiry and audience; an unverifiable token makes the observation `IDENTITY_UNLINKED`. A bare id or header is never trusted.
 4. Anonymous visitors work if a shared anonymous id exists (`{ "anonymousId": "…" }` → `anon_…`).
+
+**Keys.** `VARIANTSHIELD_IDENTITY_SECRET` fixes every customer's pseudonym and must never be rotated (it would re-bucket everyone in Flagsmith). Tokens use a separate key you can rotate: set the new `VARIANTSHIELD_IDENTITY_TOKEN_SECRET` and list the old one in `VARIANTSHIELD_IDENTITY_TOKEN_PREVIOUS` until live tokens expire.
+
+**Reporting keys.** Each surface reports with its own key, bound to one contract and surface: `npm run vs -- contract surface-keys --contract <id> --json`. Give each service only its key. The master ingest key cannot write observations. Rotating the ingest key rotates all surface keys.
 
 Browsers on different origins do not share cookies or storage. Carry the token with the request (server-side session, header, or signed redirect parameter); do not assume a shared cookie.
 
@@ -80,11 +84,20 @@ Simulation scenarios: `valid`, `invalid-combination`, `assignment-mismatch`, `en
 
 ```bash
 # four sample surfaces (web, mobile simulator, payment API, risk engine) on :8801-8804
-FLAGSMITH_URL=... FLAGSMITH_ENVIRONMENT_KEY=... VARIANTSHIELD_INGEST_KEY=... SURFACE_CONTROL_KEY=... npm run surfaces
+export SURFACE_KEYS='{"web-checkout":"vss1...",...}'   # from: npm run vs -- contract surface-keys --contract checkout-journey --json
+FLAGSMITH_URL=... FLAGSMITH_ENVIRONMENT_KEY=... SURFACE_CONTROL_KEY=... npm run surfaces
 node scripts/contract-demo.ts --customers 12     # phases A healthy, B bad combination, C stale variant; exits 1 on any surprise
 ```
 
 Reporting from your own services: see `apps/surfaces/src/surface.ts` (about 60 lines of logic) and `POST /api/contract-observations` in `docs/API.md`.
+
+## Semantics worth knowing
+
+* For each subject and surface the **latest** observation in the window decides the cell; earlier ones are kept as evidence and drive observation-level drift.
+* `observedAt` comes from the surface's clock but is bounded: more than 60 s ahead of the server is rejected.
+* History is kept for `VARIANTSHIELD_HISTORY_RETENTION_DAYS` (default 365) and observations for `RETENTION_DAYS` (default 10); a contract holds at most `VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT` observations (default 500000).
+* An anonymous id and an authenticated id are different subjects: there is no linking, so a visitor who logs in mid-journey counts as two subjects and may be bucketed differently by Flagsmith.
+* If Flagsmith's targeting depends on traits, surfaces that send different traits can legitimately get different variants. VariantShield flags the mismatch but does not capture traits.
 
 ## Limits
 

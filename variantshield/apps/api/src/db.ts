@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -175,6 +176,8 @@ export type Row = Record<string, unknown>;
 
 export class Db implements EventStore {
   readonly raw: DatabaseSync;
+  /** Identifies this database instance (used to scope in-process caches). */
+  readonly id = randomUUID();
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -235,6 +238,19 @@ export class Db implements EventStore {
 
   purgeEventsOlderThan(cutoffMs: number): number {
     return this.run("DELETE FROM events WHERE timestamp_ms < ?", cutoffMs).changes;
+  }
+
+  /**
+   * Retention for contract data. Observations (high volume) use the event retention; findings, drift and configuration
+   * snapshots are history and live much longer. Returns the number of rows removed per table.
+   */
+  purgeContractData(observationCutoffMs: number, historyCutoffMs: number): Record<string, number> {
+    return this.tx(() => ({
+      contract_observations: this.run("DELETE FROM contract_observations WHERE observed_at < ?", observationCutoffMs).changes,
+      contract_findings: this.run("DELETE FROM contract_findings WHERE last_seen_at < ?", historyCutoffMs).changes,
+      contract_drift: this.run("DELETE FROM contract_drift WHERE detected_at < ?", historyCutoffMs).changes,
+      assignment_config_snapshots: this.run("DELETE FROM assignment_config_snapshots WHERE taken_at < ?", historyCutoffMs).changes,
+    }));
   }
 
   close(): void {

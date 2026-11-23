@@ -25,6 +25,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm test
       - name: Upload bench and UI evidence on failure
         if: failure()
@@ -34,3 +35,28 @@ jobs:
           path: |
             variantshield/data/ui-bench
             variantshield/docs/screenshots
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose files
+        run: |
+          export FLAGSMITH_ENVIRONMENT_KEY=ci SURFACE_KEYS='{}' SURFACE_CONTROL_KEY=ci-control-key-0123456789 VARIANTSHIELD_INGEST_KEY=ci-ingest-key-0123456789
+          touch .env
+          docker compose -f compose.yaml config -q
+          docker compose -f compose.with-flagsmith.yaml config -q
+      - name: Build image
+        run: docker build -t variantshield:ci .
+      - name: Container starts, passes its health check and rejects weak production secrets
+        run: |
+          set -e
+          ! docker run --rm -e NODE_ENV=production -e VARIANTSHIELD_ADMIN_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaa variantshield:ci 2>&1 | grep -q "listening"
+          docker run -d --name vs -p 8787:8787 \
+            -e VARIANTSHIELD_ADMIN_TOKEN=Zk3vQ8mT1xR7pL2wN9cB5yHd4sFgJ6aE -e VARIANTSHIELD_INGEST_KEY=Qm8Lr2Xv5Tn1Wb7Pc4Hd9Ks3Fy6Jg0Ae \
+            -e VARIANTSHIELD_IDENTITY_SECRET=Rt5Yu8Io1Pl4Kj7Hg2Fd9Sa3Qw6Ez0Xc -e VARIANTSHIELD_IDENTITY_ISSUER_KEY=Vb4Nm7Ac1Sd5Fg9Hj3Kl6Qw2Er8Ty0Ui \
+            -e NODE_ENV=production --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges -v vsdata:/data variantshield:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/health && break || sleep 1; done
+          curl -fsS http://127.0.0.1:8787/health
+          docker logs vs
+          docker rm -f vs

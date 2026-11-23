@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { Ctx } from "./context.ts";
 import { HttpError } from "./http.ts";
-import { checkContract, ingestObservations, issueIdentity, registerContract } from "./contracts.ts";
+import { checkContract, ingestObservations, invalidateReports, issueIdentity, registerContract } from "./contracts.ts";
 import type { FeatureValue } from "../../../packages/contracts/src/index.ts";
 
 /**
@@ -38,6 +38,7 @@ export async function runContractScenario(ctx: Ctx, scenarioId: string) {
   manifest.contract.description = `[SIMULATION] ${scenario.title}: ${scenario.description}`;
 
   ctx.db.tx(() => { for (const t of ["contract_observations", "contract_findings", "contract_drift", "assignment_config_snapshots", "contracts"]) ctx.db.run(`DELETE FROM ${t} WHERE contract_id = ?`, SIM_CONTRACT_ID); });
+  invalidateReports(ctx, SIM_CONTRACT_ID);
   registerContract(ctx, manifest, "simulation", { simulation: true });
 
   const now = ctx.now();

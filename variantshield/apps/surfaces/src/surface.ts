@@ -24,7 +24,8 @@ export interface SurfaceConfig {
   environmentKey: string;
   environmentName: string;
   variantshieldUrl: string;
-  ingestKey: string;
+  /** Per-surface reporting key (bound to this contract and surface). The master ingest key must never be given to a surface. */
+  surfaceKey: string;
   contractId: string;
   contractVersion: number;
   experimentKey: string;
@@ -58,7 +59,7 @@ export function createSurface(cfg: SurfaceConfig): { server: Server; faults: () 
     try { const v = JSON.parse(Buffer.concat(chunks).toString() || "{}"); return typeof v === "object" && v !== null && !Array.isArray(v) ? v : {}; } catch { return {}; }
   };
   const vs = async (path: string, body: unknown): Promise<{ status: number; json: any }> => {
-    const r = await fetch(`${cfg.variantshieldUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-ingest-key": cfg.ingestKey }, body: JSON.stringify(body), signal: AbortSignal.timeout(8000) });
+    const r = await fetch(`${cfg.variantshieldUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-surface-key": cfg.surfaceKey }, body: JSON.stringify(body), signal: AbortSignal.timeout(8000) });
     return { status: r.status, json: await r.json() };
   };
 
@@ -66,7 +67,7 @@ export function createSurface(cfg: SurfaceConfig): { server: Server; faults: () 
     const body = await readBody(req);
     const token = typeof body.identityToken === "string" ? body.identityToken : undefined;
     // 1. Identity: verified by VariantShield, never guessed from anything the caller says.
-    const verified = token ? (await vs("/api/identity/verify", { token })).json : { valid: false, reason: "missing" };
+    const verified = token ? (await vs("/api/identity/verify", { token, audience: cfg.contractId })).json : { valid: false, reason: "missing" };
     const subjectRef: string | null = verified.valid ? verified.subjectRef : null;
     // 2. Assignment: from Flagsmith, for the canonical subject, in this surface's environment.
     let variant: string | null = null;

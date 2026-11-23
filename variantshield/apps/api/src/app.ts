@@ -14,10 +14,25 @@ import { ingest } from "../../../packages/telemetry/src/index.ts";
 import { RateLimiter } from "../../../packages/telemetry/src/index.ts";
 import { FlagsmithError } from "../../../packages/flagsmith-adapter/src/index.ts";
 import { contractRoutes } from "./contract-routes.ts";
+import { verifySurfaceKey, type SurfaceBinding } from "./surface-keys.ts";
+import * as metrics from "./metrics.ts";
 
-export type Auth = "public" | "admin" | "ingest" | "issuer";
-export interface Route { method: string; pattern: RegExp; auth: Auth; handler: (h: HandlerArgs) => Promise<unknown> | unknown; raw?: boolean }
-export interface HandlerArgs { ctx: Ctx; req: IncomingMessage; res: ServerResponse; params: string[]; query: URLSearchParams; body: () => Promise<unknown>; actor: string }
+/** `ingest` accepts the master ingest key or a per-surface key; `surface` accepts only a per-surface key bound to one (contract, surface). */
+export type Auth = "public" | "admin" | "ingest" | "surface" | "issuer";
+export interface Route {
+  method: string; pattern: RegExp; auth: Auth; handler: (h: HandlerArgs) => Promise<unknown> | unknown; raw?: boolean;
+  /** Not available to the read-only viewer credential (e.g. anything that reveals keys). */
+  adminOnly?: boolean;
+  /** CPU-heavy read; rate limited separately because evaluation runs on the single request thread. */
+  heavy?: boolean;
+}
+export interface HandlerArgs {
+  ctx: Ctx; req: IncomingMessage; res: ServerResponse; params: string[]; query: URLSearchParams; body: () => Promise<unknown>; actor: string;
+  /** Set for per-surface keys. */
+  surface: SurfaceBinding | null;
+  /** Charges `units` against the caller's quota (e.g. observations in a batch); throws 429 when exhausted. */
+  charge: (units: number) => void;
+}
 
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
 const PUBLIC_DIR = resolve(import.meta.dirname, "../../dashboard/public");
@@ -88,6 +103,19 @@ const routes: Route[] = [
   },
 
   {
+    // Prometheus exposition. Needs the admin or viewer credential (use `authorization: Bearer` in the scrape config).
+    method: "GET", pattern: /^\/metrics$/, auth: "admin", raw: true,
+    handler: ({ ctx, res }) => {
+      const n = (sql: string): number => Number((ctx.db.get(sql) as { n: number } | undefined)?.n ?? 0);
+      res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
+      res.end(metrics.render({
+        contract_observations_stored: n("SELECT COUNT(*) AS n FROM contract_observations"),
+        telemetry_events_stored: n("SELECT COUNT(*) AS n FROM events"),
+        contract_findings_stored: n("SELECT COUNT(*) AS n FROM contract_findings"),
+      }));
+    },
+  },
+  {
     // Read-only view of how this instance is wired. Reports whether secrets are set, never their values.
     method: "GET", pattern: /^\/api\/integration$/, auth: "admin",
     handler: async ({ ctx }) => {
@@ -100,15 +128,17 @@ const routes: Route[] = [
           ...(fs ? fs.describe() : { baseUrl: ctx.cfg.flagsmith.url, environmentKey: null, adminConfigured: false }),
           health: await flagsmithHealth(ctx),
         },
-        secrets: { adminToken: true, ingestKey: true, identitySecret: true, identityIssuerKey: true, ephemeral: ctx.cfg.ephemeralSecrets },
+        secrets: { adminToken: true, ingestKey: true, identitySecret: true, identityIssuerKey: true, identityTokenSecret: true, viewerToken: ctx.cfg.viewerToken !== null, ephemeral: ctx.cfg.ephemeralSecrets },
+        limits: { maxObservationsPerContract: ctx.cfg.maxObservationsPerContract, historyRetentionDays: ctx.cfg.historyRetentionDays, trustProxy: ctx.cfg.trustProxy },
         retentionDays: ctx.cfg.retentionDays,
         corsOrigins: ctx.cfg.corsOrigins,
         contracts: { registered: Number((ctx.db.get("SELECT COUNT(DISTINCT id) AS n FROM contracts") as { n: number } | undefined)?.n ?? 0) },
         endpoints: {
           ingest: { path: "/api/ingest", auth: "X-Ingest-Key" },
-          contractObservations: { path: "/api/contract-observations", auth: "X-Ingest-Key" },
+          contractObservations: { path: "/api/contract-observations", auth: "X-Surface-Key (per surface)" },
+          metrics: { path: "/metrics", auth: "Authorization: Bearer (admin or viewer)" },
           identityIssue: { path: "/api/identity/issue", auth: "X-Identity-Issuer-Key" },
-          identityVerify: { path: "/api/identity/verify", auth: "X-Ingest-Key" },
+          identityVerify: { path: "/api/identity/verify", auth: "X-Surface-Key or X-Ingest-Key" },
         },
       };
     },
@@ -167,9 +197,9 @@ const routes: Route[] = [
       return { plan: setApproval(ctx, intParam(params[0], "id"), b.decision as ApprovalStatus, actor, typeof b.note === "string" ? b.note : "") };
     },
   },
-  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/reliability$/, auth: "admin", handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, report: reliabilityFor(ctx, plan, src) }; } },
-  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/timeline$/, auth: "admin", handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, timeline: timelineFor(ctx, plan, src, query.get("buckets") ? Number(query.get("buckets")) : 12) }; } },
-  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/verdict$/, auth: "admin", handler: async ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return verdictFor(ctx, plan, src); } },
+  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/reliability$/, auth: "admin", heavy: true, handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, report: reliabilityFor(ctx, plan, src) }; } },
+  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/timeline$/, auth: "admin", heavy: true, handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, timeline: timelineFor(ctx, plan, src, query.get("buckets") ? Number(query.get("buckets")) : 12) }; } },
+  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/verdict$/, auth: "admin", heavy: true, handler: async ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return verdictFor(ctx, plan, src); } },
   {
     method: "POST", pattern: /^\/api\/plans\/(\d+)\/evidence$/, auth: "admin",
     handler: async ({ ctx, params, actor }) => {
@@ -254,21 +284,40 @@ function serveStatic(res: ServerResponse, pathname: string): boolean {
 
 export interface App { server: Server; ctx: Ctx }
 
+const clientIp = (req: IncomingMessage, trustProxy: boolean): string => {
+  if (trustProxy) {
+    const xff = req.headers["x-forwarded-for"];
+    const last = (Array.isArray(xff) ? xff.join(",") : xff ?? "").split(",").map((x) => x.trim()).filter(Boolean).pop();
+    if (last && last.length <= 64) return last;
+  }
+  return req.socket.remoteAddress ?? "unknown";
+};
+
 export function createApp(ctx: Ctx): App {
   const ingestLimiter = new RateLimiter({ capacity: 200, refillPerSecond: 100 });
   const adminLimiter = new RateLimiter({ capacity: 120, refillPerSecond: 30 });
   const controlLimiter = new RateLimiter({ capacity: 10, refillPerSecond: 0.2 });
+  // Failed authentication is throttled per client before any credential is compared: 10 failures, then one attempt per 5 s.
+  const authFailLimiter = new RateLimiter({ capacity: 10, refillPerSecond: 0.2 });
+  // Per-surface quota in observations (not requests), so batching cannot bypass the rate limit.
+  const surfaceQuota = new RateLimiter({ capacity: 2000, refillPerSecond: 500 });
+  const heavyLimiter = new RateLimiter({ capacity: 30, refillPerSecond: 2 });
+  const throttle = (limiter: RateLimiter, key: string, cost = 1): void => {
+    const wait = limiter.take(key, Date.now(), cost);
+    if (wait > 0) { metrics.inc("rate_limited_total"); throw new HttpError(429, "rate_limited", "Too many requests", { retryAfterMs: wait }); }
+  };
 
-  const server = createServer(async (req, res) => {
+  const server = createServer({ maxHeaderSize: 16_384 }, async (req, res) => {
     const started = Date.now();
     const requestId = randomUUID();
     const url = new URL(req.url ?? "/", "http://localhost");
     const origin = req.headers.origin;
     const cors: Record<string, string> = origin && ctx.cfg.corsOrigins.includes(origin)
-      ? { "access-control-allow-origin": origin, vary: "Origin", "access-control-allow-headers": "authorization, content-type, x-ingest-key, x-identity-issuer-key, x-variantshield-actor", "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS" }
+      ? { "access-control-allow-origin": origin, vary: "Origin", "access-control-allow-headers": "authorization, content-type, x-ingest-key, x-surface-key, x-identity-issuer-key, x-variantshield-actor", "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS" }
       : {};
     res.setHeader("x-request-id", requestId);
     for (const [k, v] of Object.entries({ ...SECURITY_HEADERS, ...cors })) res.setHeader(k, v);
+    if (ctx.cfg.trustProxy && req.headers["x-forwarded-proto"] === "https") res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
     let status = 500;
     try {
       if (req.method === "OPTIONS") { res.writeHead(204).end(); status = 204; return; }
@@ -277,27 +326,42 @@ export function createApp(ctx: Ctx): App {
         if (req.method === "GET" && !url.pathname.startsWith("/api/") && serveStatic(res, url.pathname)) { status = 200; return; }
         throw new HttpError(404, "not_found", "Not found");
       }
-      const ip = req.socket.remoteAddress ?? "unknown";
-      const guard = (limiter: RateLimiter, key: string): void => {
-        const wait = limiter.take(key, Date.now());
-        if (wait > 0) throw new HttpError(429, "rate_limited", "Too many requests", { retryAfterMs: wait });
-      };
+      const ip = clientIp(req, ctx.cfg.trustProxy);
+      const failKey = `fail:${ip}`;
+      let surface: SurfaceBinding | null = null;
+      let charge: (units: number) => void = () => {};
+      if (route.auth !== "public") {
+        const wait = authFailLimiter.peek(failKey, Date.now());
+        if (wait > 0) { metrics.inc("auth_lockouts_total"); throw new HttpError(429, "too_many_auth_failures", "Too many failed authentication attempts; try again shortly", { retryAfterMs: wait }); }
+      }
+      const reject = (msg: string): never => { authFailLimiter.take(failKey, Date.now()); metrics.inc("auth_failures_total", { kind: route.auth }); throw new HttpError(401, "unauthorized", msg); };
       if (route.auth === "issuer") {
-        if (!tokenMatches(req.headers["x-identity-issuer-key"] as string | undefined, ctx.cfg.identityIssuerKey)) throw new HttpError(401, "unauthorized", "Missing or invalid identity issuer key");
-        guard(adminLimiter, `issuer:${ip}`);
-      } else if (route.auth === "ingest") {
-        if (!tokenMatches(req.headers["x-ingest-key"] as string | undefined, ctx.cfg.ingestKey)) throw new HttpError(401, "unauthorized", "Missing or invalid ingest key");
-        guard(ingestLimiter, `ingest:${ip}`);
+        if (!tokenMatches(req.headers["x-identity-issuer-key"] as string | undefined, ctx.cfg.identityIssuerKey)) reject("Missing or invalid identity issuer key");
+        throttle(adminLimiter, `issuer:${ip}`);
+      } else if (route.auth === "ingest" || route.auth === "surface") {
+        surface = verifySurfaceKey(ctx.cfg.ingestKey, req.headers["x-surface-key"]);
+        const master = route.auth === "ingest" && tokenMatches(req.headers["x-ingest-key"] as string | undefined, ctx.cfg.ingestKey);
+        if (!surface && !master) reject(route.auth === "surface" ? "Missing or invalid surface key (the master ingest key cannot report observations)" : "Missing or invalid ingest or surface key");
+        if (surface) {
+          const sk = `surface:${surface.contractId}:${surface.surfaceId}`;
+          throttle(ingestLimiter, sk);
+          charge = (units) => throttle(surfaceQuota, sk, units);
+        } else throttle(ingestLimiter, `ingest:${ip}`);
       } else if (route.auth === "admin") {
-        if (!tokenMatches(bearer(req), ctx.cfg.adminToken)) throw new HttpError(401, "unauthorized", "Missing or invalid admin token");
-        guard(adminLimiter, `admin:${ip}`);
-        if (req.method !== "GET" && url.pathname === "/api/control" ) guard(controlLimiter, `control:${ip}`);
+        const given = bearer(req);
+        if (tokenMatches(given, ctx.cfg.adminToken)) { /* full access */ }
+        else if (ctx.cfg.viewerToken !== null && tokenMatches(given, ctx.cfg.viewerToken)) {
+          if (req.method !== "GET" || route.adminOnly) throw new HttpError(403, "forbidden", "The read-only credential cannot do this");
+        } else reject("Missing or invalid admin token");
+        throttle(adminLimiter, `admin:${ip}`);
+        if (route.heavy) throttle(heavyLimiter, `heavy:${ip}`);
+        if (req.method !== "GET" && url.pathname === "/api/control") throttle(controlLimiter, `control:${ip}`);
       }
       const rawActor = String(req.headers["x-variantshield-actor"] ?? "");
       const actor = /^[\w .@-]{1,64}$/.test(rawActor) ? rawActor : "admin";
       const match = url.pathname.match(route.pattern)!;
       let parsed: Promise<unknown> | null = null;
-      const result = await route.handler({ ctx, req, res, params: match.slice(1), query: url.searchParams, body: () => (parsed ??= readJson(req)), actor });
+      const result = await route.handler({ ctx, req, res, params: match.slice(1), query: url.searchParams, body: () => (parsed ??= readJson(req)), actor, surface, charge });
       if (route.raw) { status = 200; return; }
       status = 200;
       sendJson(res, 200, result);
@@ -306,8 +370,14 @@ export function createApp(ctx: Ctx): App {
       if (e instanceof HttpError && e.status === 429) res.setHeader("retry-after", String(Math.ceil(Number((e.detail as { retryAfterMs: number }).retryAfterMs) / 1000)));
       sendError(res, e);
     } finally {
+      metrics.inc("http_requests_total", { status: `${Math.floor(status / 100)}xx` });
       if (process.env.VARIANTSHIELD_LOG !== "off") console.log(JSON.stringify({ t: new Date().toISOString(), rid: requestId, method: req.method, path: url.pathname, status, ms: Date.now() - started }));
     }
   });
+  // Slow-client and connection-exhaustion limits (Node defaults are generous).
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxConnections = 1000;
   return { server, ctx };
 }

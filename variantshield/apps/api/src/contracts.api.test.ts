@@ -1,3 +1,4 @@
+import { postAsSurfaces } from "./testing/observations.ts";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -18,6 +19,8 @@ let clock = 1_800_000_000_000;
 
 const manifest = (over: (m: any) => void = () => {}): any => { const m = parseYaml(readFileSync(EXAMPLE_MANIFEST, "utf8")); over(m); return m; };
 async function call(method: string, path: string, body?: unknown, headers: Record<string, string> = { authorization: `Bearer ${ADMIN}` }) {
+  // Observations are reported per surface with that surface's own key (the master ingest key is not accepted there).
+  if (path === "/api/contract-observations" && method === "POST" && headers["x-ingest-key"] === INGEST) return postAsSurfaces(base, INGEST, body);
   const res = await fetch(base + path, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   return { status: res.status, json: text ? JSON.parse(text) : null };

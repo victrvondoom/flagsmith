@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { mergeConfig, type DeepPartial, type GuardrailConfig } from "../../../packages/guardrail-engine/src/index.ts";
 
 export interface AppConfig {
@@ -11,6 +11,18 @@ export interface AppConfig {
   identitySecret: string;
   /** Credential for the trusted backend that issues identity tokens. */
   identityIssuerKey: string;
+  /** Signs identity tokens. Separate from `identitySecret` (which fixes pseudonymous subject refs and must never rotate). */
+  identityTokenSecret: string;
+  /** Older token-signing secrets still accepted for verification during a rotation. */
+  identityTokenPrevious: string[];
+  /** Optional read-only credential: may call GET routes (including /metrics) but nothing that changes state or reveals keys. */
+  viewerToken: string | null;
+  /** Trust the last X-Forwarded-For hop as the client address (only behind a proxy you control). */
+  trustProxy: boolean;
+  /** Hard cap on stored observations per contract; ingest returns 429 beyond it. */
+  maxObservationsPerContract: number;
+  /** Retention for findings, drift and configuration snapshots (observations use retentionDays). */
+  historyRetentionDays: number;
   ephemeralSecrets: boolean;
   corsOrigins: string[];
   retentionDays: number;
@@ -33,11 +45,23 @@ export function loadConfig(env: Env = process.env): AppConfig {
     const v = env[name];
     if (v) {
       if (v.length < 16) throw new Error(`${name} must be at least 16 characters`);
+      // In production a secret must look random: long enough and not a repeated or trivial pattern.
+      if (production && (v.length < 24 || new Set(v).size < 10)) throw new Error(`${name} is too weak for production: use at least 24 characters from a random generator (e.g. openssl rand -base64 32)`);
       return v;
     }
     if (production) throw new Error(`${name} is required when NODE_ENV=production`);
     ephemeral = true;
     return randomBytes(18).toString("base64url");
+  };
+  const identitySecret = secret("VARIANTSHIELD_IDENTITY_SECRET");
+  const tokenSecretEnv = env.VARIANTSHIELD_IDENTITY_TOKEN_SECRET;
+  if (tokenSecretEnv !== undefined && tokenSecretEnv.length < 16) throw new Error("VARIANTSHIELD_IDENTITY_TOKEN_SECRET must be at least 16 characters");
+  const viewerEnv = env.VARIANTSHIELD_VIEWER_TOKEN;
+  if (viewerEnv !== undefined && viewerEnv !== "" && viewerEnv.length < 16) throw new Error("VARIANTSHIELD_VIEWER_TOKEN must be at least 16 characters");
+  const intEnv = (name: string, dflt: number, min: number): number => {
+    const v = env[name] === undefined ? dflt : Number(env[name]);
+    if (!Number.isInteger(v) || v < min) throw new Error(`${name} must be an integer >= ${min}`);
+    return v;
   };
   const adminKey = env.FLAGSMITH_ADMIN_API_KEY;
   const adminToken = env.FLAGSMITH_ADMIN_TOKEN;
@@ -50,8 +74,14 @@ export function loadConfig(env: Env = process.env): AppConfig {
     dbPath: env.VARIANTSHIELD_DB_PATH ?? "data/variantshield.db",
     adminToken: secret("VARIANTSHIELD_ADMIN_TOKEN"),
     ingestKey: secret("VARIANTSHIELD_INGEST_KEY"),
-    identitySecret: secret("VARIANTSHIELD_IDENTITY_SECRET"),
+    identitySecret,
     identityIssuerKey: secret("VARIANTSHIELD_IDENTITY_ISSUER_KEY"),
+    identityTokenSecret: tokenSecretEnv || createHmac("sha256", identitySecret).update("vs-token-key:v1").digest("base64url"),
+    identityTokenPrevious: (env.VARIANTSHIELD_IDENTITY_TOKEN_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+    viewerToken: viewerEnv ? viewerEnv : null,
+    trustProxy: env.VARIANTSHIELD_TRUST_PROXY === "true",
+    maxObservationsPerContract: intEnv("VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT", 500_000, 1000),
+    historyRetentionDays: intEnv("VARIANTSHIELD_HISTORY_RETENTION_DAYS", 365, 1),
     ephemeralSecrets: ephemeral,
     corsOrigins: (env.CORS_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     retentionDays: Number(env.RETENTION_DAYS ?? 10),

@@ -169,7 +169,9 @@ function lineChart({ title, points, variants, pick, format, thresholds, unit }) 
   const W = 480, H = 210, L = 52, R = 12, T = 12, B = 28;
   const values = points.flatMap((p) => variants.map((v) => pick(p.variants[v]))).filter((x) => x !== null && x !== undefined);
   const lines = [thresholds?.warn, thresholds?.breach].filter((x) => x !== null && x !== undefined);
-  const root = h("div", { class: "chart", role: "img", "aria-label": `${title} over time per variant` }, h("h3", {}, title));
+  const lastPoint = points[points.length - 1];
+  const latest = lastPoint ? variants.map((v) => { const val = pick(lastPoint.variants[v]); return `${v}: ${val === null || val === undefined ? "no data" : format(val)}`; }).join(", ") : "";
+  const root = h("div", { class: "chart", role: "img", "aria-label": `${title} over time per variant. Latest ${latest}${thresholds?.breach != null ? `. Breach threshold ${format(thresholds.breach)}` : ""}` }, h("h3", {}, title));
   if (!values.length) { root.append(h("p", { class: "muted" }, "No data in this range yet.")); return root; }
   const max = Math.max(...values, ...lines) * 1.15 || 1;
   const x = (i) => L + (i * (W - L - R)) / Math.max(1, points.length - 1);

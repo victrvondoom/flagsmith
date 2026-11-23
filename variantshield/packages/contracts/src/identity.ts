@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
  * Canonical subject identity.
@@ -27,26 +27,37 @@ export function deriveSubjectRef(secret: string, kind: "authenticated" | "anonym
   return `${kind === "anonymous" ? "anon" : "sub"}_${b64(mac).slice(0, 32)}`;
 }
 
-export interface IdentityTokenPayload { sub: string; kind: "authenticated" | "anonymous"; iat: number; exp: number }
+export interface IdentityTokenPayload { sub: string; kind: "authenticated" | "anonymous"; iat: number; exp: number; jti?: string; aud?: string }
 
-export function issueIdentityToken(secret: string, sub: string, kind: IdentityTokenPayload["kind"], nowMs: number, ttlSeconds = 900): string {
-  const payload: IdentityTokenPayload = { sub, kind, iat: Math.floor(nowMs / 1000), exp: Math.floor(nowMs / 1000) + ttlSeconds };
+/**
+ * Tokens carry a random `jti` and may be scoped to one contract with `audience`; a token minted for one contract is not
+ * accepted by another. They remain bearer credentials until `exp`, so keep the TTL short and send them only server-to-server.
+ */
+export function issueIdentityToken(secret: string, sub: string, kind: IdentityTokenPayload["kind"], nowMs: number, ttlSeconds = 900, audience?: string): string {
+  const payload: IdentityTokenPayload = { sub, kind, iat: Math.floor(nowMs / 1000), exp: Math.floor(nowMs / 1000) + ttlSeconds, jti: b64(randomBytes(12)), ...(audience ? { aud: audience } : {}) };
   const body = b64(Buffer.from(JSON.stringify(payload)));
   return `vsid1.${body}.${b64(createHmac("sha256", secret).update(`vsid1.${body}`).digest())}`;
 }
 
-export type TokenResult = { ok: true; sub: string; kind: IdentityTokenPayload["kind"]; expiresAtMs: number } | { ok: false; reason: "missing" | "malformed" | "bad_signature" | "expired" | "not_yet_valid" };
+export type TokenResult = { ok: true; sub: string; kind: IdentityTokenPayload["kind"]; expiresAtMs: number } | { ok: false; reason: "missing" | "malformed" | "bad_signature" | "expired" | "not_yet_valid" | "wrong_audience" };
 
-export function verifyIdentityToken(secret: string, token: unknown, nowMs: number, skewSeconds = 30): TokenResult {
+/** `secrets` may list the current key first and older keys after it, so signing keys can be rotated without invalidating live tokens. */
+export function verifyIdentityToken(secrets: string | readonly string[], token: unknown, nowMs: number, skewSeconds = 30, expectedAudience?: string): TokenResult {
   if (typeof token !== "string" || token === "") return { ok: false, reason: "missing" };
+  if (token.length > 1024) return { ok: false, reason: "malformed" };
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== "vsid1") return { ok: false, reason: "malformed" };
-  const expected = createHmac("sha256", secret).update(`vsid1.${parts[1]}`).digest();
   const given = Buffer.from(parts[2]!, "base64url");
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { ok: false, reason: "bad_signature" };
+  let signed = false;
+  for (const secret of typeof secrets === "string" ? [secrets] : secrets) {
+    const expected = createHmac("sha256", secret).update(`vsid1.${parts[1]}`).digest();
+    if (given.length === expected.length && timingSafeEqual(given, expected)) signed = true;
+  }
+  if (!signed) return { ok: false, reason: "bad_signature" };
   let p: IdentityTokenPayload;
   try { p = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")); } catch { return { ok: false, reason: "malformed" }; }
   if (typeof p.sub !== "string" || !/^(sub|anon)_[A-Za-z0-9_-]{32}$/.test(p.sub) || typeof p.exp !== "number" || typeof p.iat !== "number") return { ok: false, reason: "malformed" };
+  if (expectedAudience !== undefined && p.aud !== undefined && p.aud !== expectedAudience) return { ok: false, reason: "wrong_audience" };
   const now = nowMs / 1000;
   if (now > p.exp) return { ok: false, reason: "expired" };
   if (now + skewSeconds < p.iat) return { ok: false, reason: "not_yet_valid" };

@@ -1,3 +1,4 @@
+import { postAsSurfaces } from "../apps/api/src/testing/observations.ts";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -25,7 +26,7 @@ const SURF: Record<string, string> = { "web-checkout": "checkout_ui", "mobile-ch
 async function report(customer: string, variant: string, over: Record<string, Record<string, string>> = {}): Promise<string> {
   const id = await api("POST", "/api/identity/issue", { subject: customer }, { "x-identity-issuer-key": ISSUER });
   const observations = Object.entries(SURF).map(([surfaceId, f]) => ({ observationId: `${customer}-${surfaceId}`, contractId: "checkout-journey", contractVersion: 1, experimentKey: "checkout_journey", environment: "production", envFingerprint: "aaaaaaaaaaaaaaaa", assignmentFlag: "checkout_journey_variant", assignedVariant: variant, surfaceId, identityToken: id.token, observedAt: Date.now() - 20_000, features: { [f]: over[surfaceId]?.[f] ?? FEATS[variant]![f] } }));
-  await api("POST", "/api/contract-observations", { observations }, { "x-ingest-key": INGEST });
+  await postAsSurfaces(base, INGEST, { observations });
   return id.subjectRef;
 }
 
