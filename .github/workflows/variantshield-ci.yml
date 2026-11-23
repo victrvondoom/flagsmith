@@ -1,0 +1,36 @@
+name: VariantShield CI
+on:
+  pull_request:
+    paths: ["variantshield/**", ".github/workflows/variantshield-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["variantshield/**"]
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: variantshield
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: variantshield/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Upload bench and UI evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: variantshield-evidence
+          path: |
+            variantshield/data/ui-bench
+            variantshield/docs/screenshots

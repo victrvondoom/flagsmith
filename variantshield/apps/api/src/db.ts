@@ -1,0 +1,169 @@
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { EventStore, StoredRow, TelemetryEvent } from "../../../packages/telemetry/src/index.ts";
+
+const MIGRATIONS: string[] = [
+  `CREATE TABLE plans (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     key TEXT NOT NULL UNIQUE,
+     title TEXT NOT NULL,
+     business_problem TEXT NOT NULL DEFAULT '',
+     hypothesis TEXT NOT NULL DEFAULT '',
+     control_variant TEXT NOT NULL DEFAULT 'control',
+     treatment_variants TEXT NOT NULL DEFAULT '[]',
+     primary_metric TEXT NOT NULL DEFAULT '',
+     feature_key TEXT NOT NULL DEFAULT '',
+     guardrail_overrides TEXT NOT NULL DEFAULT '{}',
+     acceptance_criteria TEXT NOT NULL DEFAULT '[]',
+     owner TEXT NOT NULL DEFAULT '',
+     flagsmith_experiment_id INTEGER,
+     last_flagsmith_status TEXT,
+     last_synced_at INTEGER,
+     approval_status TEXT NOT NULL DEFAULT 'pending',
+     approval_by TEXT,
+     approval_at INTEGER,
+     approval_note TEXT,
+     is_simulation INTEGER NOT NULL DEFAULT 0,
+     sim_results TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE events (
+     event_id TEXT PRIMARY KEY,
+     payload_hash TEXT NOT NULL,
+     type TEXT NOT NULL,
+     experiment_id TEXT,
+     feature_key TEXT NOT NULL,
+     variant_key TEXT,
+     attribution TEXT NOT NULL,
+     identity_id TEXT NOT NULL,
+     timestamp_ms INTEGER NOT NULL,
+     request_id TEXT NOT NULL,
+     operation TEXT NOT NULL,
+     outcome TEXT NOT NULL,
+     latency_ms REAL,
+     error_category TEXT,
+     http_status INTEGER,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX events_exp_ts ON events (experiment_id, source, timestamp_ms);
+   CREATE INDEX events_ts ON events (timestamp_ms);
+   CREATE TABLE bench_runs (
+     id TEXT PRIMARY KEY,
+     status TEXT NOT NULL,
+     started_at INTEGER NOT NULL,
+     finished_at INTEGER,
+     target TEXT NOT NULL,
+     fault TEXT,
+     summary TEXT,
+     log TEXT
+   );
+   CREATE TABLE bench_results (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     run_id TEXT NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+     variant TEXT NOT NULL,
+     test_name TEXT NOT NULL,
+     status TEXT NOT NULL,
+     duration_ms INTEGER NOT NULL,
+     error TEXT,
+     screenshot TEXT
+   );
+   CREATE TABLE evidence (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+     kind TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     created_by TEXT NOT NULL,
+     payload TEXT NOT NULL
+   );
+   CREATE TABLE audit (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     ts INTEGER NOT NULL,
+     actor TEXT NOT NULL,
+     action TEXT NOT NULL,
+     plan_id INTEGER,
+     flagsmith_experiment_id INTEGER,
+     dry_run INTEGER NOT NULL,
+     simulated INTEGER NOT NULL DEFAULT 0,
+     outcome TEXT NOT NULL,
+     reason TEXT,
+     evidence_id INTEGER,
+     before_state TEXT,
+     after_state TEXT,
+     detail TEXT
+   );`,
+];
+
+export type Row = Record<string, unknown>;
+
+export class Db implements EventStore {
+  readonly raw: DatabaseSync;
+
+  constructor(path: string) {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.raw = new DatabaseSync(path);
+    this.raw.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    this.migrate();
+  }
+
+  private migrate(): void {
+    this.raw.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    const done = new Set((this.raw.prepare("SELECT version FROM schema_migrations").all() as { version: number }[]).map((r) => r.version));
+    MIGRATIONS.forEach((sql, i) => {
+      if (done.has(i + 1)) return;
+      this.tx(() => {
+        this.raw.exec(sql);
+        this.raw.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(i + 1, Date.now());
+      });
+    });
+  }
+
+  tx<T>(fn: () => T): T {
+    this.raw.exec("BEGIN IMMEDIATE");
+    try {
+      const out = fn();
+      this.raw.exec("COMMIT");
+      return out;
+    } catch (e) {
+      this.raw.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  all(sql: string, ...params: (string | number | null)[]): Row[] {
+    return this.raw.prepare(sql).all(...params) as Row[];
+  }
+
+  get(sql: string, ...params: (string | number | null)[]): Row | undefined {
+    return this.raw.prepare(sql).get(...params) as Row | undefined;
+  }
+
+  run(sql: string, ...params: (string | number | null)[]): { lastInsertRowid: number; changes: number } {
+    const r = this.raw.prepare(sql).run(...params);
+    return { lastInsertRowid: Number(r.lastInsertRowid), changes: Number(r.changes) };
+  }
+
+  insertIfAbsent(row: StoredRow): "inserted" | { existingHash: string } {
+    const e = row.event;
+    const res = this.raw.prepare(
+      `INSERT OR IGNORE INTO events (event_id, payload_hash, type, experiment_id, feature_key, variant_key, attribution, identity_id,
+         timestamp_ms, request_id, operation, outcome, latency_ms, error_category, http_status, source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(e.eventId, row.payloadHash, e.type, e.experimentId, e.featureKey, e.variantKey, e.attribution, e.identityId, e.timestampMs,
+      e.requestId, e.operation, e.outcome, e.latencyMs, e.errorCategory, e.httpStatus, e.source);
+    if (Number(res.changes) === 1) return "inserted";
+    const existing = this.get("SELECT payload_hash FROM events WHERE event_id = ?", e.eventId);
+    return { existingHash: String(existing?.payload_hash) };
+  }
+
+  purgeEventsOlderThan(cutoffMs: number): number {
+    return this.run("DELETE FROM events WHERE timestamp_ms < ?", cutoffMs).changes;
+  }
+
+  close(): void {
+    this.raw.close();
+  }
+}
+
+export type { TelemetryEvent };
