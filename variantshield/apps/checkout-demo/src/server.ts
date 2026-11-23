@@ -64,7 +64,7 @@ export function createDemoApp(opts: { flagsmith: FlagsmithClient | null; telemet
     const cookie = /(?:^|;\s*)vs_uid=([\w-]{3,64})/.exec(req.headers.cookie ?? "")?.[1];
     if (cookie) return cookie;
     const uid = randomUUID().replace(/-/g, "");
-    res.setHeader("set-cookie", `vs_uid=${uid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+    res.setHeader("set-cookie", `vs_uid=${uid}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
     return uid;
   }
 
@@ -146,7 +146,7 @@ export function createDemoApp(opts: { flagsmith: FlagsmithClient | null; telemet
       if (req.method === "GET" && url.pathname === "/") {
         const uid = identify(req, res);
         const override = cfg.allowOverride ? url.searchParams.get("variant") : null;
-        if (override && /^[\w-]{1,64}$/.test(override)) res.setHeader("set-cookie", [`vs_override=${override}; Path=/; SameSite=Lax`, ...[res.getHeader("set-cookie") ?? []].flat().map(String)]);
+        if (override && /^[\w-]{1,64}$/.test(override)) res.setHeader("set-cookie", [`vs_override=${override}; Path=/; HttpOnly; Secure; SameSite=Lax`, ...[res.getHeader("set-cookie") ?? []].flat().map(String)]);
         const { a, banner } = await assign(uid, override);
         const variant = a.variantKey ?? "control";
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
