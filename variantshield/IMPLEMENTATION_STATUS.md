@@ -27,4 +27,4 @@ Genuine outcomes are recorded in the "Log" below as work proceeds.
 - Full `npm run check` (tsc strict, eslint, all tests): 221 tests, 0 failures, exit 0.
 - Live contract demo against a real Flagsmith (built from source) passed before a sandbox restart: healthy, combination violation, stale-variant assignment mismatch. Not re-run after restart.
 - Not verified: Docker/compose (no daemon), Flagsmith Cloud, live config-fingerprint drift, live environment mismatch.
-- Not built: a dedicated integration-config screen (the Command Center shows the connection).
+- Integration page (`#/integration`, `GET /api/integration`) added: shows Flagsmith connection health and which secrets are set, never values. `npm run check`: 222 tests, 0 failures.

@@ -88,6 +88,32 @@ const routes: Route[] = [
   },
 
   {
+    // Read-only view of how this instance is wired. Reports whether secrets are set, never their values.
+    method: "GET", pattern: /^\/api\/integration$/, auth: "admin",
+    handler: async ({ ctx }) => {
+      const fs = ctx.flagsmith;
+      return {
+        version: VERSION,
+        demoMode: ctx.cfg.demoMode,
+        flagsmith: {
+          configured: fs !== null,
+          ...(fs ? fs.describe() : { baseUrl: ctx.cfg.flagsmith.url, environmentKey: null, adminConfigured: false }),
+          health: await flagsmithHealth(ctx),
+        },
+        secrets: { adminToken: true, ingestKey: true, identitySecret: true, identityIssuerKey: true, ephemeral: ctx.cfg.ephemeralSecrets },
+        retentionDays: ctx.cfg.retentionDays,
+        corsOrigins: ctx.cfg.corsOrigins,
+        contracts: { registered: Number((ctx.db.get("SELECT COUNT(DISTINCT id) AS n FROM contracts") as { n: number } | undefined)?.n ?? 0) },
+        endpoints: {
+          ingest: { path: "/api/ingest", auth: "X-Ingest-Key" },
+          contractObservations: { path: "/api/contract-observations", auth: "X-Ingest-Key" },
+          identityIssue: { path: "/api/identity/issue", auth: "X-Identity-Issuer-Key" },
+          identityVerify: { path: "/api/identity/verify", auth: "X-Ingest-Key" },
+        },
+      };
+    },
+  },
+  {
     method: "GET", pattern: /^\/api\/overview$/, auth: "admin",
     handler: async ({ ctx }) => {
       const board = await buildBoard(ctx);

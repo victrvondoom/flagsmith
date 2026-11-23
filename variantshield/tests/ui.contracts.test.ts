@@ -136,6 +136,13 @@ describe("Cross-Surface Contracts dashboard", () => {
     await page.locator(".banner .chip", { hasText: "CONTRACT VALID" }).first().waitFor();
     assert.equal(await page.getByRole("row", { name: /compliant/ }).count(), 4);
     await shot("contracts-07-valid-simulation");
+    // Integration page: wiring is visible, secret values never are.
+    await page.goto(`${base}/#/integration`);
+    await page.getByRole("heading", { name: "Flagsmith connection" }).waitFor();
+    await page.getByRole("heading", { name: "Secrets (values hidden)" }).waitFor();
+    await page.getByRole("heading", { name: "Endpoints for your services" }).waitFor();
+    assert.ok(!(await page.locator("main").innerText()).includes(ADMIN), "admin token is not rendered");
+    await shot("integration-01-config");
     assert.deepEqual(problems.filter((p) => !/status of 401/.test(p)), [], "no console errors or CSP violations");
   });
 });

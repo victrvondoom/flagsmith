@@ -46,6 +46,15 @@ const linkedPlan = async (): Promise<number> => {
 };
 
 describe("api: security and plumbing", () => {
+  it("integration__admin__reports_wiring_without_leaking_secret_values", async () => {
+    const r = await call("GET", "/api/integration");
+    assert.equal(r.status, 200);
+    assert.equal(r.json.secrets.identitySecret, true);
+    assert.ok(r.json.flagsmith.health);
+    assert.ok(r.json.endpoints.identityIssue);
+    assert.ok(!JSON.stringify(r.json).includes(ADMIN));
+    assert.equal((await call("GET", "/api/integration", undefined, {})).status, 401);
+  });
   it("health__is_public", async () => {
     assert.equal((await call("GET", "/health", undefined, {})).status, 200);
   });

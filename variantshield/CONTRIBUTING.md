@@ -13,6 +13,10 @@ npm run check                     # typecheck + lint + all tests
 
 Node 22.18 or newer. No build step: TypeScript runs through Node's type stripping, so use only erasable syntax (no `enum`, no constructor parameter properties). `tsc --noEmit` enforces strict mode.
 
+## Working on contracts
+
+`packages/contracts` is pure (no I/O); keep it that way and put persistence in `apps/api/src/contracts.ts`. New finding codes need: a type in `types.ts`, a unit test in `contracts.test.ts`, a row in `docs/guides/CONTRACTS.md`, and a dashboard label. Run the sample surfaces with `npm run surfaces` and the live driver with `npm run demo:contracts`. Never log or return identity secrets or tokens.
+
 ## Ground rules
 
 * **Never fake Flagsmith.** Real behaviour is tested against the contract double in `packages/flagsmith-adapter/src/testing/fake-flagsmith.ts`, which is built from Flagsmith's source and clearly labelled as a double. If you change an adapter assumption, verify it against a real Flagsmith with `scripts/verify-flagsmith.ts` and note the result in your PR.

@@ -1,6 +1,7 @@
 # VariantShield plus a local self-hosted Flagsmith using Flagsmith's own published images, mirroring the
 # official docker-compose.yml in https://github.com/Flagsmith/flagsmith (no Flagsmith code is copied or modified).
 # Local evaluation only: change every secret before exposing anything. Not exercised in the authoring sandbox.
+# Set VARIANTSHIELD_IDENTITY_SECRET and VARIANTSHIELD_IDENTITY_ISSUER_KEY (16+ chars) in .env before starting.
 include:
   - compose.yaml
 x-flagsmith-env: &flagsmith-env

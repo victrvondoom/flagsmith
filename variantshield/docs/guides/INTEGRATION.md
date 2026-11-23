@@ -43,3 +43,7 @@ A complete reference implementation is `apps/checkout-demo/src/server.ts` and `i
 | checkout p95 latency | nearest-rank p95 of `checkout_latency.latencyMs` |
 
 Statuses reflect association with a variant, not causation; confounders such as traffic mix and deploys are not controlled.
+
+## 5. Cross-surface contracts (optional)
+
+If one experiment drives several services, add a contract. Your auth layer mints a pseudonymous identity once per customer (`POST /api/identity/issue`, issuer key), every surface uses the returned `subjectRef` as the Flagsmith identity, forwards the signed token between services, and reports an observation after resolving its features (`POST /api/contract-observations`, ingest key). See [`CONTRACTS.md`](CONTRACTS.md) and [`../API.md`](../API.md). The **Integration** page in the dashboard shows which credentials and endpoints your instance has configured.
