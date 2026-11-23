@@ -51,6 +51,7 @@ label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 3px
 .s-WARNING, .s-RECOVERING, .s-pending, .s-REQUIRES_INVESTIGATION, .s-QUALIFYING { color: var(--warn); background: var(--warn-bg); } .s-WARNING::before, .s-RECOVERING::before { transform: rotate(45deg); }
 .s-BREACH, .s-failed, .s-error, .s-rejected, .s-WINNER_BUT_UNSAFE { color: var(--bad); background: var(--bad-bg); } .s-BREACH::before, .s-failed::before, .s-WINNER_BUT_UNSAFE::before { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 .s-INSUFFICIENT_DATA, .s-INSUFFICIENT_EVIDENCE, .s-PLANNED, .s-CONFIGURED, .s-PAUSED, .s-none, .s-unknown, .s-HEALTHY_BUT_INCONCLUSIVE, .s-created { color: var(--info); background: var(--info-bg); }
+.s-compliant { color: var(--ok); background: var(--ok-bg); } .s-violating { color: var(--bad); background: var(--bad-bg); }
 .s-simulation, .s-SIM { color: var(--sim); background: var(--sim-bg); } .s-stale { color: var(--warn); background: var(--warn-bg); }
 .banner { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; background: var(--panel); }
 .banner.sim { border-left-color: var(--sim); } .banner.bad { border-left-color: var(--bad); } .banner.warn { border-left-color: var(--warn); } .banner.ok { border-left-color: var(--ok); }
@@ -72,3 +73,18 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 .mt6 { margin-top: 6px; } .mt10 { margin-top: 10px; } .mt12 { margin-top: 12px; } .mt16 { margin-top: 16px; } label.nomargin { margin: 0; }
 .pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; }
 .plan .chip { max-width: 100%; white-space: normal; }
+textarea.manifest { min-height: 260px; margin-top: 10px; }
+tr.sel td { background: var(--panel-2); } tr.clickable { cursor: pointer; } tr.clickable:hover td, tbody tr[onclick]:hover td { background: var(--panel-2); }
+.tabs button[aria-selected="false"] { background: var(--panel); }
+td ul { margin: 0; padding-left: 16px; }
+.chart h3 { margin-bottom: 4px; } .chart-svg { width: 100%; height: auto; display: block; }
+.chart .grid-line { stroke: var(--line); stroke-width: 1; } .chart .axis { fill: var(--muted); font: 10px var(--mono); }
+:root { --s0: #6b7686; --s1: #0b57d0; --s2: #b4630a; --s3: #6a2c91; }
+@media (prefers-color-scheme: dark) { :root { --s0: #9aa3b2; --s1: #8ab4f8; --s2: #f0a35a; --s3: #d8b4f2; } }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; } .chart .dot { stroke: none; }
+.chart .line.s0 { stroke: var(--s0); } .chart .line.s1 { stroke: var(--s1); } .chart .line.s2 { stroke: var(--s2); } .chart .line.s3 { stroke: var(--s3); }
+.chart .dot.s0 { fill: var(--s0); } .chart .dot.s1 { fill: var(--s1); } .chart .dot.s2 { fill: var(--s2); } .chart .dot.s3 { fill: var(--s3); }
+.swatch { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; }
+.swatch.s0 { background: var(--s0); } .swatch.s1 { background: var(--s1); } .swatch.s2 { background: var(--s2); } .swatch.s3 { background: var(--s3); }
+.chart .th { fill: none; stroke-width: 1; stroke-dasharray: 4 3; } .chart .th.warn { stroke: var(--warn); } .chart .th.breach { stroke: var(--bad); } .chart .th-label { font-size: 9px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }

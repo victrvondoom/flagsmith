@@ -158,15 +158,56 @@ function planPicker(plans, plan, navigate) {
 }
 const noPlans = h("div", { class: "card" }, "No experiment plans yet. Import experiments from Flagsmith on the Command Center, create a plan on the Trial Board, or run a simulation.");
 
+
+/* ---------- charts (SVG, no inline styles: CSP forbids them) ---------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs = {}, ...kids) => { const el = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v)); for (const kid of kids.flat()) if (kid) el.append(kid); return el; };
+const SERIES_CLASS = ["s0", "s1", "s2", "s3"];
+
+/** Line chart of one metric across time buckets, one line per variant, with dashed warn/breach guardrail lines. */
+function lineChart({ title, points, variants, pick, format, thresholds, unit }) {
+  const W = 480, H = 210, L = 52, R = 12, T = 12, B = 28;
+  const values = points.flatMap((p) => variants.map((v) => pick(p.variants[v]))).filter((x) => x !== null && x !== undefined);
+  const lines = [thresholds?.warn, thresholds?.breach].filter((x) => x !== null && x !== undefined);
+  const root = h("div", { class: "chart", role: "img", "aria-label": `${title} over time per variant` }, h("h3", {}, title));
+  if (!values.length) { root.append(h("p", { class: "muted" }, "No data in this range yet.")); return root; }
+  const max = Math.max(...values, ...lines) * 1.15 || 1;
+  const x = (i) => L + (i * (W - L - R)) / Math.max(1, points.length - 1);
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const g = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", preserveAspectRatio: "xMidYMid meet" });
+  for (let i = 0; i <= 4; i++) { const v = (max * i) / 4; g.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-line" }), svg("text", { x: L - 6, y: y(v) + 4, class: "axis", "text-anchor": "end" }, format(v))); }
+  const stamp = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  [0, Math.floor(points.length / 2), points.length - 1].forEach((i) => g.append(svg("text", { x: x(i), y: H - 8, class: "axis", "text-anchor": i === 0 ? "start" : i === points.length - 1 ? "end" : "middle" }, stamp(points[i].endMs))));
+  if (thresholds?.warn != null) g.append(svg("line", { x1: L, x2: W - R, y1: y(thresholds.warn), y2: y(thresholds.warn), class: "th warn" }), svg("text", { x: W - R, y: y(thresholds.warn) - 3, class: "axis th-label", "text-anchor": "end" }, "warn"));
+  if (thresholds?.breach != null) g.append(svg("line", { x1: L, x2: W - R, y1: y(thresholds.breach), y2: y(thresholds.breach), class: "th breach" }), svg("text", { x: W - R, y: y(thresholds.breach) - 3, class: "axis th-label", "text-anchor": "end" }, "breach"));
+  variants.forEach((v, vi) => {
+    const cls = SERIES_CLASS[vi % SERIES_CLASS.length];
+    let d = "";
+    points.forEach((p, i) => { const val = pick(p.variants[v]); if (val === null || val === undefined) return; d += `${d && points[i - 1] && pick(points[i - 1].variants[v]) != null ? "L" : "M"}${x(i).toFixed(1)},${y(val).toFixed(1)} `; });
+    g.append(svg("path", { d: d.trim(), class: `line ${cls}`, fill: "none" }));
+    points.forEach((p, i) => { const val = pick(p.variants[v]); if (val === null || val === undefined) return; const dot = svg("circle", { cx: x(i), cy: y(val), r: 3, class: `dot ${cls}` }); dot.append(svg("title", {}, `${v} ${stamp(p.endMs)}: ${format(val)}${unit ?? ""} (${p.variants[v].sessions} checkouts)`)); g.append(dot); });
+  });
+  root.append(g, h("div", { class: "legend" }, variants.map((v, vi) => h("span", {}, h("span", { class: `swatch ${SERIES_CLASS[vi % SERIES_CLASS.length]}` }), ` ${v}`))));
+  return root;
+}
+
 /* ---------- D. Reliability Observatory ---------- */
 export async function observatory({ navigate }) {
   const { plans, plan } = await planContext();
   if (!plan) return noPlans;
-  const [rel, ev, v] = await Promise.all([api("GET", `/api/plans/${plan.id}/reliability`), api("GET", `/api/events/summary?source=${plan.isSimulation ? "simulation" : "real"}`), api("GET", `/api/plans/${plan.id}/verdict`)]);
+  const [rel, ev, v, tl] = await Promise.all([api("GET", `/api/plans/${plan.id}/reliability`), api("GET", `/api/events/summary?source=${plan.isSimulation ? "simulation" : "real"}`), api("GET", `/api/plans/${plan.id}/verdict`), api("GET", `/api/plans/${plan.id}/timeline`)]);
   const root = h("div", { class: "grid" });
   root.append(h("div", { class: "topbar" }, h("h1", {}, "Reliability Observatory"), planPicker(plans, plan, navigate)));
   root.append(h("div", { class: `banner ${plan.isSimulation ? "sim" : ""}` }, plan.isSimulation ? chip("SIM", "SIMULATION") : chip("ok", "REAL TELEMETRY"), ` Baseline "${rel.report.baselineVariant}", window ${Math.round(rel.report.windowMs / 60000)} min, evaluated ${fmtTime(rel.report.evaluatedAtMs)}.`));
   rel.report.notes.forEach((n) => root.append(h("p", { class: "muted" }, n)));
+  const T = tl.timeline;
+  const pctFmt = (n) => `${(n * 100).toFixed(1)}%`;
+  root.append(h("div", { class: "card" }, h("header", {}, h("h2", {}, "Timelines"), h("span", { class: "muted" }, `${T.points.length} buckets of ${Math.round(T.bucketMs / 60000)} min · dashed lines are the warn and breach guardrails relative to ${rel.report.baselineVariant}`)),
+    h("div", { class: "grid g2" },
+      lineChart({ title: "Payment failure rate", points: T.points, variants: T.variants, pick: (p) => p?.paymentFailureRate, format: pctFmt, thresholds: T.thresholds.payment_failure_rate }),
+      lineChart({ title: "Checkout p95 latency", points: T.points, variants: T.variants, pick: (p) => p?.p95LatencyMs, format: (n) => `${Math.round(n)}ms`, thresholds: T.thresholds.checkout_p95_latency_ms }),
+      lineChart({ title: "Duplicate submission rate", points: T.points, variants: T.variants, pick: (p) => p?.duplicateRate, format: pctFmt, thresholds: T.thresholds.duplicate_submission_rate }),
+      lineChart({ title: "Conversion rate (observed checkouts)", points: T.points, variants: T.variants, pick: (p) => p?.conversionRate, format: pctFmt }))));
   if (!rel.report.variants.length) root.append(h("div", { class: "card" }, "No treatment variants configured on this plan."));
   for (const vr of rel.report.variants) {
     const rows = vr.metrics.map((m) => h("tr", {}, h("td", { class: "mono" }, m.metric), h("td", {}, chip(m.status)), h("td", { class: "num" }, fmtMetric(m.metric, m.treatment.value), h("br"), h("span", { class: "muted" }, `n=${m.treatment.sampleSize}`)),

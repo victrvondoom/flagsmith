@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --experimental-sqlite --disable-warning=ExperimentalWarning --test \"packages/**/*.test.ts\" \"apps/**/*.test.ts\" \"tests/**/*.test.ts\"",
+    "vs": "node apps/cli/src/main.ts",
     "serve": "node --experimental-sqlite --disable-warning=ExperimentalWarning apps/api/src/main.ts",
+    "surfaces": "node apps/surfaces/src/main.ts",
+    "demo:contracts": "node scripts/contract-demo.ts",
     "demo:checkout": "node apps/checkout-demo/src/main.ts",
     "simulate": "node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/simulate.ts",
     "bench": "node apps/variant-bench/src/run.ts --out bench-output",
@@ -26,5 +29,11 @@
     "playwright": "^1.63.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.18.0"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "bin": {
+    "variantshield": "apps/cli/src/main.ts"
   }
 }

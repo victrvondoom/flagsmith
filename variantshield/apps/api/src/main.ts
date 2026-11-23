@@ -22,6 +22,7 @@ server.listen(cfg.port, cfg.host, () => {
     console.log("No VARIANTSHIELD_ADMIN_TOKEN / VARIANTSHIELD_INGEST_KEY set: using ephemeral development secrets (regenerated each start).");
     console.log(`  admin token: ${cfg.adminToken}`);
     console.log(`  ingest key:  ${cfg.ingestKey}`);
+    console.log(`  identity issuer key: ${cfg.identityIssuerKey}`);
   }
 });
 

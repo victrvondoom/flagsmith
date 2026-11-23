@@ -59,12 +59,19 @@ node scripts/live-demo.ts --approve "PAUSE <id>"   # omit --approve to stop at t
 
 Details and diagrams: [`docs/architecture/OVERVIEW.md`](docs/architecture/OVERVIEW.md). Integrating your own app: [`docs/guides/INTEGRATION.md`](docs/guides/INTEGRATION.md).
 
+## Cross-surface experiment contracts
+
+Declare how one experiment must behave across web, mobile, payment and risk services in a versioned YAML/JSON contract, propagate a pseudonymous signed identity, and let VariantShield flag assignment mismatches, environment mismatches, unlinked identities, version skew, invalid feature combinations and missing or stale surfaces. It reuses Flagsmith's own assignment; it never buckets users. Guide: [`docs/guides/CONTRACTS.md`](docs/guides/CONTRACTS.md). API: [`docs/API.md`](docs/API.md). Example: [`examples/checkout-journey.contract.yaml`](examples/checkout-journey.contract.yaml). Dashboard: `#/contracts`. VariantShield is an independent open-source project, not an official Flagsmith product.
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 112 tests (unit, API integration, end to end, Playwright UI) |
+| `npm test` | 221 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
+| `npm run surfaces` | four sample surfaces (web, mobile simulator, payment API, risk engine) on :8801-8804 |
+| `npm run demo:contracts` | live contract demo: healthy, bad combination, stale variant |
 | `npm run serve` | API + dashboard |
 | `npm run demo:checkout` | checkout demo (variants from Flagsmith) |
 | `npm run simulate` | both scenarios, in memory |
@@ -73,14 +80,17 @@ Details and diagrams: [`docs/architecture/OVERVIEW.md`](docs/architecture/OVERVI
 
 ## Configuration
 
-Copy [`.env.example`](.env.example). Required in production: `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`. For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
+Copy [`.env.example`](.env.example). Required in production: `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`, `VARIANTSHIELD_IDENTITY_SECRET`, `VARIANTSHIELD_IDENTITY_ISSUER_KEY`. For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
 
 ## Verification status (what was actually run)
 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 112 automated tests | pass (guardrail engine 15, telemetry 15, verdict 10, adapter 23, API 35, demo 10, end to end 2, browser UI 2) |
+| 221 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, CLI 12, surfaces 8, contract UI journey 1 |
+| Cross-surface contract demo against real Flagsmith (pre-restart run) | healthy contract, combination violation and stale-variant mismatch detected as expected; 12 subjects re-verified against Flagsmith |
+| Assignment-config drift on real Flagsmith | **not run live**; covered by tests against a fake Flagsmith only |
+| Environment mismatch live | only simulation and tests (one real Flagsmith environment available) |
 | Playwright bench: clean run | 27/27 pass; each of 4 injected faults fails only the targeted variant |
 | Real Flagsmith (built from source, PostgreSQL 16) | adapter, events, results parsing, lifecycle and the 14-step demo verified |
 | Docker / compose | **not run** (no Docker daemon in the authoring sandbox); files are syntax-checked only |

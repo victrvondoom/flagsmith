@@ -131,3 +131,36 @@ describe("guardrail engine", () => {
     assert.deepEqual(evaluate(obs, cfg, NOW), evaluate(obs, cfg, NOW));
   });
 });
+
+describe("timeline", () => {
+  it("timeline__regression_starting_in_the_last_bucket__shows_up_only_there_and_in_the_threshold_lines", async () => {
+    const { timeline } = await import("./index.ts");
+    const B = 5 * 60_000;
+    const obs = [
+      ...generateTraffic({ variantKey: "control", sessions: 1200, fromMs: NOW - 12 * B, toMs: NOW }, 91),
+      ...generateTraffic({ variantKey: "upi_first", sessions: 1100, fromMs: NOW - 12 * B, toMs: NOW - B, paymentFailureRate: 0.02 }, 92),
+      ...generateTraffic({ variantKey: "upi_first", sessions: 200, fromMs: NOW - B, toMs: NOW, paymentFailureRate: 0.3 }, 93),
+    ];
+    const t = timeline(obs, mergeConfig({ windowMs: 15 * 60_000 }), NOW, { buckets: 12, bucketMs: B });
+    assert.equal(t.points.length, 12);
+    assert.deepEqual(t.variants, ["control", "upi_first"]);
+    const last = t.points[11]!.variants.upi_first!, earlier = t.points[3]!.variants.upi_first!;
+    assert.ok(last.paymentFailureRate! > 0.2 && earlier.paymentFailureRate! < 0.08);
+    const th = t.thresholds.payment_failure_rate;
+    assert.ok(th.breach! > th.warn! && th.warn! > th.baseline!);
+    assert.ok(t.thresholds.checkout_p95_latency_ms.breach! > t.thresholds.checkout_p95_latency_ms.baseline!);
+  });
+
+  it("timeline__unattributed_traffic__is_excluded_not_assigned", async () => {
+    const { timeline } = await import("./index.ts");
+    const t = timeline(generateTraffic({ variantKey: null, sessions: 300, fromMs: NOW - 900_000, toMs: NOW }, 94), mergeConfig({ windowMs: 15 * 60_000 }), NOW);
+    assert.deepEqual(t.variants, []);
+  });
+
+  it("timeline__empty_buckets__have_null_rates_not_zero", async () => {
+    const { timeline } = await import("./index.ts");
+    const t = timeline(generateTraffic({ variantKey: "control", sessions: 50, fromMs: NOW - 60_000, toMs: NOW }, 95), mergeConfig({ windowMs: 15 * 60_000 }), NOW, { buckets: 6, bucketMs: 300_000 });
+    assert.equal(t.points[0]!.variants.control!.paymentFailureRate, null);
+    assert.ok(t.points[5]!.variants.control!.paymentFailureRate !== null);
+  });
+});

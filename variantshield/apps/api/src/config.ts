@@ -7,6 +7,10 @@ export interface AppConfig {
   dbPath: string;
   adminToken: string;
   ingestKey: string;
+  /** HMAC key for pseudonymous subject references and identity tokens. Never leaves the server. */
+  identitySecret: string;
+  /** Credential for the trusted backend that issues identity tokens. */
+  identityIssuerKey: string;
   ephemeralSecrets: boolean;
   corsOrigins: string[];
   retentionDays: number;
@@ -46,6 +50,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     dbPath: env.VARIANTSHIELD_DB_PATH ?? "data/variantshield.db",
     adminToken: secret("VARIANTSHIELD_ADMIN_TOKEN"),
     ingestKey: secret("VARIANTSHIELD_INGEST_KEY"),
+    identitySecret: secret("VARIANTSHIELD_IDENTITY_SECRET"),
+    identityIssuerKey: secret("VARIANTSHIELD_IDENTITY_ISSUER_KEY"),
     ephemeralSecrets: ephemeral,
     corsOrigins: (env.CORS_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     retentionDays: Number(env.RETENTION_DAYS ?? 10),

@@ -69,3 +69,21 @@ export interface FlagsmithClientConfig {
   /** Probability (0-1) above which Flagsmith's chance_to_win counts as a win. */
   winProbability?: number;
 }
+
+export interface AssignmentConfigState {
+  /** null = the environment default; a number = a segment override (experiments roll out through one). */
+  segmentId: number | null;
+  enabled: boolean;
+  defaultValue: string | null;
+  /** Percentage allocated to each multivariate option value. */
+  weights: { value: string; percentage: number }[];
+}
+
+export interface AssignmentConfig {
+  featureName: string;
+  environmentId: number;
+  environmentName: string;
+  states: AssignmentConfigState[];
+  /** Stable hash of everything that can change who gets which variant. */
+  fingerprint: string;
+}

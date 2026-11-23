@@ -93,8 +93,84 @@ const MIGRATIONS: string[] = [
      after_state TEXT,
      detail TEXT
    );`,
+  // 2: cross-surface experiment contracts. Contract versions are immutable; findings and drift are historical.
+  `CREATE TABLE contracts (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     contract_id TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     manifest TEXT NOT NULL,
+     manifest_hash TEXT NOT NULL,
+     is_simulation INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL,
+     created_by TEXT NOT NULL,
+     UNIQUE (contract_id, version)
+   );
+   CREATE TABLE contract_observations (
+     observation_id TEXT PRIMARY KEY,
+     payload_hash TEXT NOT NULL,
+     contract_id TEXT NOT NULL,
+     contract_version INTEGER NOT NULL,
+     experiment_key TEXT NOT NULL,
+     environment TEXT NOT NULL,
+     env_fingerprint TEXT,
+     assignment_flag TEXT NOT NULL,
+     assigned_variant TEXT,
+     surface_id TEXT NOT NULL,
+     subject_ref TEXT,
+     identity_status TEXT NOT NULL,
+     identity_reason TEXT,
+     observed_at INTEGER NOT NULL,
+     received_at INTEGER NOT NULL,
+     features TEXT NOT NULL,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX cobs_contract_ts ON contract_observations (contract_id, source, observed_at);
+   CREATE INDEX cobs_subject ON contract_observations (contract_id, subject_ref, surface_id, observed_at);
+   CREATE TABLE contract_findings (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     dedupe_key TEXT NOT NULL UNIQUE,
+     contract_id TEXT NOT NULL,
+     contract_version INTEGER NOT NULL,
+     code TEXT NOT NULL,
+     severity TEXT NOT NULL,
+     surface_id TEXT,
+     subject_ref TEXT,
+     observed_at INTEGER,
+     detected_at INTEGER NOT NULL,
+     last_seen_at INTEGER NOT NULL,
+     expected TEXT NOT NULL,
+     actual TEXT NOT NULL,
+     message TEXT NOT NULL,
+     evidence TEXT NOT NULL,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX cfind_contract ON contract_findings (contract_id, contract_version, detected_at);
+   CREATE TABLE contract_drift (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     dedupe_key TEXT NOT NULL UNIQUE,
+     contract_id TEXT NOT NULL,
+     previous_version INTEGER,
+     current_version INTEGER NOT NULL,
+     attribute TEXT NOT NULL,
+     previous_value TEXT,
+     current_value TEXT,
+     severity TEXT NOT NULL,
+     affected_surfaces TEXT NOT NULL,
+     message TEXT NOT NULL,
+     evidence TEXT NOT NULL,
+     detected_at INTEGER NOT NULL,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX cdrift_contract ON contract_drift (contract_id, detected_at);
+   CREATE TABLE assignment_config_snapshots (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     contract_id TEXT NOT NULL,
+     taken_at INTEGER NOT NULL,
+     fingerprint TEXT NOT NULL,
+     config TEXT NOT NULL
+   );
+   CREATE INDEX csnap_contract ON assignment_config_snapshots (contract_id, taken_at);`,
 ];
-
 export type Row = Record<string, unknown>;
 
 export class Db implements EventStore {

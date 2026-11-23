@@ -1,10 +1,11 @@
 import { api, ApiError, session } from "./api.js";
 import { chip, h, toast } from "./ui.js";
 import { commandCenter, control, observatory, trialBoard, variantBench, verdictRoom } from "./views.js";
+import { contractsView } from "./contracts.js";
 
 const ROUTES = [
   ["#/command", "Command Center", commandCenter], ["#/board", "Trial Board", trialBoard], ["#/bench", "Variant Bench", variantBench],
-  ["#/observatory", "Reliability Observatory", observatory], ["#/verdict", "Dual Verdict Room", verdictRoom], ["#/control", "Experiment Control", control],
+  ["#/observatory", "Reliability Observatory", observatory], ["#/verdict", "Dual Verdict Room", verdictRoom], ["#/control", "Experiment Control", control], ["#/contracts", "Cross-Surface Contracts", contractsView],
 ];
 const app = document.getElementById("app");
 

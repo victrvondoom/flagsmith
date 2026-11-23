@@ -205,6 +205,18 @@ describe("api: plans, board and verdicts against Flagsmith", () => {
     assert.ok(real.variants.every((v: any) => v.status === "INSUFFICIENT_DATA"));
   });
 
+  it("timeline__simulation__shows_the_regression_in_the_latest_bucket_with_threshold_lines", async () => {
+    const run = await call("POST", "/api/simulate/dangerous-winner", {});
+    const t = (await call("GET", `/api/plans/${run.json.plan.id}/timeline`)).json.timeline;
+    assert.equal(t.points.length, 12);
+    assert.equal(t.variants[0], "control", "baseline first");
+    assert.ok(t.variants.includes("upi_first") && t.variants.includes("one_tap"));
+    const rates = t.points.map((p: any) => p.variants.upi_first?.paymentFailureRate).filter((x: number | null | undefined) => x != null);
+    assert.ok(rates.length >= 2 && Math.max(...rates) > t.thresholds.payment_failure_rate.breach, "a bucket exceeds the breach line");
+    assert.ok(Math.min(...rates) < t.thresholds.payment_failure_rate.warn, "the earlier healthy window is under the warn line");
+    assert.equal((await call("GET", `/api/plans/${run.json.plan.id}/timeline?source=bogus`)).status, 400);
+  });
+
   it("evidence__snapshot_is_persisted_and_retrievable", async () => {
     const run = await call("POST", "/api/simulate/dangerous-winner", {});
     const e = await call("POST", `/api/plans/${run.json.plan.id}/evidence`, {});

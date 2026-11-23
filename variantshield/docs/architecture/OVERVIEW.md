@@ -87,3 +87,24 @@ sequenceDiagram
 ## Data model (SQLite, versioned migrations)
 
 `plans`, `events` (idempotency key = `event_id`, payload hash for conflict detection, `source` real|simulation, `attribution` valid|missing|unknown_variant), `bench_runs`/`bench_results`, `evidence`, `audit`, `schema_migrations`. Events are purged after `RETENTION_DAYS`.
+
+## Cross-surface contracts (Phase 2)
+
+```
+ identity issuer (trusted backend) --> subjectRef + vsid1 token
+        |
+ surfaces: web | mobile | payment-api | risk-engine
+   each: verify token -> ask Flagsmith for the variant of subjectRef -> resolve own features -> report observation
+        |
+ POST /api/contract-observations  (ingest key, token verified, deduped)
+        |
+ contracts store (immutable versions) + observations
+        |
+ evaluateContract (pure) --> findings, status      configDrift / observationDrift / silentSurfaces --> drift history
+        |
+ dashboard #/contracts, CLI `variantshield contract ...`, POST /api/contracts/:id/check (re-verifies with Flagsmith)
+```
+
+Package `packages/contracts` is pure (no I/O): manifest parsing, combination validation, identity primitives, correlation, drift. `apps/api/src/contracts.ts` adds persistence and the Flagsmith re-verification.
+
+Tables added by migration 2: `contracts` (id, version, normalized JSON, immutable), `contract_observations` (identity_status verified|unlinked), `contract_findings` (dedupe key, kept as history), `contract_drift`, `assignment_config_snapshots`. The simulation contract id is `sim-checkout-journey`; real surfaces cannot write to it. Details: [`docs/guides/CONTRACTS.md`](../guides/CONTRACTS.md).

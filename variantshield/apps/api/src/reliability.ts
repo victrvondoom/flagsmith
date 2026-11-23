@@ -1,6 +1,6 @@
 import type { Ctx } from "./context.ts";
 import { guardrailConfigFor, type Plan } from "./plans.ts";
-import { evaluate, type GuardrailReport, type Observation, type ObservationType } from "../../../packages/guardrail-engine/src/index.ts";
+import { evaluate, timeline, type GuardrailReport, type Observation, type ObservationType } from "../../../packages/guardrail-engine/src/index.ts";
 import { dualVerdict, type DualVerdict, type ExperimentResultSummary } from "../../../packages/verdict/src/index.ts";
 import { FlagsmithError, type FlagsmithExperimentStatus } from "../../../packages/flagsmith-adapter/src/index.ts";
 
@@ -30,6 +30,14 @@ export function reliabilityFor(ctx: Ctx, plan: Plan, source: SourceFilter): Guar
   const now = ctx.now();
   const lookback = (cfg.recoveryWindows + 1) * cfg.windowMs;
   return evaluate(loadObservations(ctx, plan, source, now - lookback, now), cfg, now, plan.treatmentVariants);
+}
+
+export function timelineFor(ctx: Ctx, plan: Plan, source: SourceFilter, buckets = 12): ReturnType<typeof timeline> {
+  const cfg = guardrailConfigFor(ctx, plan);
+  const now = ctx.now();
+  const n = Math.max(2, Math.min(48, Number.isFinite(buckets) ? Math.floor(buckets) : 12));
+  const bucketMs = Math.max(60_000, Math.round(cfg.windowMs / 3));
+  return timeline(loadObservations(ctx, plan, source, now - n * bucketMs, now), cfg, now, { buckets: n, bucketMs });
 }
 
 export interface VerdictResponse {

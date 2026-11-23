@@ -29,6 +29,8 @@ export interface FakeFlagsmith {
   exposures: Map<number, unknown>;
   /** Fail the next N requests whose path contains `pathIncludes` with `status`. */
   failNext(pathIncludes: string, status: number, times: number, headers?: Record<string, string>): void;
+  /** Change the percentage a variant receives, as an operator would in the Flagsmith UI. */
+  setWeight(experimentId: number, variant: string, percentage: number): void;
   /** Make the next pause call report success while leaving the experiment running (to test verification). */
   ignoreNextTransition(): void;
   close(): Promise<void>;
@@ -44,6 +46,7 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
     url: "", environmentKey, adminKey, experiments, events: [], calls: [], results: new Map(), exposures: new Map(),
     failNext: (includes, status, times, headers = {}) => void failures.push({ includes, status, left: times, headers }),
     ignoreNextTransition: () => { state.ignoreTransition = true; },
+    setWeight: (id, variant, percentage) => { const e = experiments.get(id); if (e) e.weights[variant] = percentage / 100; },
     close: () => new Promise((r) => server.close(() => r())),
   };
 
@@ -93,6 +96,28 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
       const flags = [...experiments.values()].filter((e) => e.status === "running").map((e) => ({ feature: { name: e.featureName }, enabled: true, feature_state_value: assign(e, identifier) }));
       const paused = [...experiments.values()].filter((e) => e.status !== "running").map((e) => ({ feature: { name: e.featureName }, enabled: true, feature_state_value: "control" }));
       return send(200, { identifier, flags: [...flags, ...paused.filter((p) => !flags.some((f) => f.feature.name === p.feature.name))] });
+    }
+    // Management endpoints used by getAssignmentConfig (shapes taken from a real Flagsmith response).
+    if (path === `/api/v1/environments/${environmentKey}/` && req.method === "GET") {
+      if (!admin) return send(req.headers.authorization ? 403 : 401, { detail: "Authentication credentials were not provided." });
+      return send(200, { id: 1, name: "Production", project: 1, api_key: environmentKey });
+    }
+    if (path === "/api/v1/features/featurestates/" && req.method === "GET") {
+      if (!admin) return send(req.headers.authorization ? 403 : 401, { detail: "Authentication credentials were not provided." });
+      const e = [...experiments.values()].find((x) => x.featureName === u.searchParams.get("feature_name"));
+      if (!e) return send(200, { count: 0, next: null, previous: null, results: [] });
+      const opts = e.variants.filter((v) => v !== "control");
+      const mv = (pct: (v: string) => number): unknown[] => opts.map((v, i) => ({ id: i + 1, multivariate_feature_option: i + 1, percentage_allocation: pct(v) }));
+      const states: Record<string, unknown>[] = [{ id: 1, enabled: true, feature: 100 + e.id, feature_segment: null, feature_state_value: { type: "unicode", string_value: "control" }, multivariate_feature_state_values: mv(() => 0) }];
+      if (e.status !== "created") states.push({ id: 2, enabled: true, feature: 100 + e.id, feature_segment: 1, feature_state_value: { type: "unicode", string_value: "control" }, multivariate_feature_state_values: mv((v) => Math.round((e.weights[v] ?? 0) * 1000) / 10) });
+      return send(200, { count: states.length, next: null, previous: null, results: states });
+    }
+    const pm = path.match(/^\/api\/v1\/projects\/1\/features\/(\d+)\/$/);
+    if (pm && req.method === "GET") {
+      if (!admin) return send(req.headers.authorization ? 403 : 401, { detail: "Authentication credentials were not provided." });
+      const e = [...experiments.values()].find((x) => 100 + x.id === Number(pm[1]));
+      if (!e) return send(404, { detail: "Not found." });
+      return send(200, { id: 100 + e.id, name: e.featureName, type: "MULTIVARIATE", multivariate_options: e.variants.filter((v) => v !== "control").map((v, i) => ({ id: i + 1, type: "unicode", string_value: v })) });
     }
     if (path === "/api/v1/events/" && req.method === "POST") {
       if (!sdk) return send(401, { detail: "Invalid environment key" });

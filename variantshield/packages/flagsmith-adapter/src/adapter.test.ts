@@ -160,4 +160,28 @@ describe("flagsmith adapter (against a contract double)", () => {
   it("describe__never_exposes_admin_credential", () => {
     assert.doesNotMatch(JSON.stringify(client().describe()), /test-admin-key/);
   });
+
+  it("getAssignmentConfig__reads_default_and_experiment_override_with_weights", async () => {
+    const c = await client().getAssignmentConfig("checkout_flow");
+    assert.equal(c.environmentName, "Production");
+    assert.equal(c.states.length, 2);
+    const experiment = c.states.find((s) => s.segmentId !== null)!;
+    assert.deepEqual(experiment.weights, [{ value: "one_tap", percentage: 33.3 }, { value: "upi_first", percentage: 33.3 }]);
+    assert.match(c.fingerprint, /^[a-f0-9]{16}$/);
+  });
+
+  it("getAssignmentConfig__weights_changed__changes_the_fingerprint", async () => {
+    const before = (await client().getAssignmentConfig("checkout_flow")).fingerprint;
+    assert.equal((await client().getAssignmentConfig("checkout_flow")).fingerprint, before, "stable while nothing changes");
+    fake.setWeight(7, "upi_first", 50);
+    assert.notEqual((await client().getAssignmentConfig("checkout_flow")).fingerprint, before);
+  });
+
+  it("getAssignmentConfig__unknown_feature__is_not_found", async () => {
+    assert.equal((await code(client().getAssignmentConfig("nope"))).kind, "not_found");
+  });
+
+  it("getAssignmentConfig__without_admin_credential__is_config_error", async () => {
+    assert.equal((await code(client({ admin: undefined }).getAssignmentConfig("checkout_flow"))).kind, "config");
+  });
 });

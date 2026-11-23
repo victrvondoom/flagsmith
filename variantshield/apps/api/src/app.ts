@@ -5,7 +5,7 @@ import { extname, join, resolve } from "node:path";
 import type { Ctx } from "./context.ts";
 import { bearer, HttpError, readJson, SECURITY_HEADERS, sendError, sendJson, tokenMatches } from "./http.ts";
 import { createPlan, deletePlan, getPlan, listPlans, parsePlanInput, setApproval, updatePlan, type ApprovalStatus } from "./plans.ts";
-import { reliabilityFor, verdictFor, type SourceFilter } from "./reliability.ts";
+import { reliabilityFor, timelineFor, verdictFor, type SourceFilter } from "./reliability.ts";
 import { buildBoard } from "./board.ts";
 import { runControl, expectedConfirmation, type ControlAction } from "./control.ts";
 import { benchRunDetail, screenshotPath, startBenchRun, type Fault } from "./bench.ts";
@@ -13,10 +13,11 @@ import { runScenario, SCENARIOS } from "./simulation.ts";
 import { ingest } from "../../../packages/telemetry/src/index.ts";
 import { RateLimiter } from "../../../packages/telemetry/src/index.ts";
 import { FlagsmithError } from "../../../packages/flagsmith-adapter/src/index.ts";
+import { contractRoutes } from "./contract-routes.ts";
 
-type Auth = "public" | "admin" | "ingest";
-interface Route { method: string; pattern: RegExp; auth: Auth; handler: (h: HandlerArgs) => Promise<unknown> | unknown; raw?: boolean }
-interface HandlerArgs { ctx: Ctx; req: IncomingMessage; res: ServerResponse; params: string[]; query: URLSearchParams; body: () => Promise<unknown>; actor: string }
+export type Auth = "public" | "admin" | "ingest" | "issuer";
+export interface Route { method: string; pattern: RegExp; auth: Auth; handler: (h: HandlerArgs) => Promise<unknown> | unknown; raw?: boolean }
+export interface HandlerArgs { ctx: Ctx; req: IncomingMessage; res: ServerResponse; params: string[]; query: URLSearchParams; body: () => Promise<unknown>; actor: string }
 
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
 const PUBLIC_DIR = resolve(import.meta.dirname, "../../dashboard/public");
@@ -141,6 +142,7 @@ const routes: Route[] = [
     },
   },
   { method: "GET", pattern: /^\/api\/plans\/(\d+)\/reliability$/, auth: "admin", handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, report: reliabilityFor(ctx, plan, src) }; } },
+  { method: "GET", pattern: /^\/api\/plans\/(\d+)\/timeline$/, auth: "admin", handler: ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return { source: src, timeline: timelineFor(ctx, plan, src, query.get("buckets") ? Number(query.get("buckets")) : 12) }; } },
   { method: "GET", pattern: /^\/api\/plans\/(\d+)\/verdict$/, auth: "admin", handler: async ({ ctx, params, query }) => { const plan = getPlan(ctx, intParam(params[0], "id")); const src = query.get("source") ? source(query) : plan.isSimulation ? "simulation" : "real"; return verdictFor(ctx, plan, src); } },
   {
     method: "POST", pattern: /^\/api\/plans\/(\d+)\/evidence$/, auth: "admin",
@@ -207,6 +209,8 @@ const routes: Route[] = [
   { method: "POST", pattern: /^\/api\/simulate\/([\w-]+)$/, auth: "admin", handler: ({ ctx, params }) => { if (!ctx.cfg.demoMode) throw new HttpError(403, "demo_disabled", "Simulation is disabled (VARIANTSHIELD_DEMO_MODE=false)"); return runScenario(ctx, params[0]!); } },
 ];
 
+routes.push(...contractRoutes);
+
 function benchRunSnapshot(ctx: Ctx): unknown {
   const run = ctx.db.get("SELECT id, status, fault FROM bench_runs WHERE status IN ('passed','failed') ORDER BY started_at DESC LIMIT 1");
   return run ? { runId: run.id, status: run.status, fault: run.fault } : null;
@@ -235,7 +239,7 @@ export function createApp(ctx: Ctx): App {
     const url = new URL(req.url ?? "/", "http://localhost");
     const origin = req.headers.origin;
     const cors: Record<string, string> = origin && ctx.cfg.corsOrigins.includes(origin)
-      ? { "access-control-allow-origin": origin, vary: "Origin", "access-control-allow-headers": "authorization, content-type, x-ingest-key, x-variantshield-actor", "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS" }
+      ? { "access-control-allow-origin": origin, vary: "Origin", "access-control-allow-headers": "authorization, content-type, x-ingest-key, x-identity-issuer-key, x-variantshield-actor", "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS" }
       : {};
     res.setHeader("x-request-id", requestId);
     for (const [k, v] of Object.entries({ ...SECURITY_HEADERS, ...cors })) res.setHeader(k, v);
@@ -252,7 +256,10 @@ export function createApp(ctx: Ctx): App {
         const wait = limiter.take(key, Date.now());
         if (wait > 0) throw new HttpError(429, "rate_limited", "Too many requests", { retryAfterMs: wait });
       };
-      if (route.auth === "ingest") {
+      if (route.auth === "issuer") {
+        if (!tokenMatches(req.headers["x-identity-issuer-key"] as string | undefined, ctx.cfg.identityIssuerKey)) throw new HttpError(401, "unauthorized", "Missing or invalid identity issuer key");
+        guard(adminLimiter, `issuer:${ip}`);
+      } else if (route.auth === "ingest") {
         if (!tokenMatches(req.headers["x-ingest-key"] as string | undefined, ctx.cfg.ingestKey)) throw new HttpError(401, "unauthorized", "Missing or invalid ingest key");
         guard(ingestLimiter, `ingest:${ip}`);
       } else if (route.auth === "admin") {

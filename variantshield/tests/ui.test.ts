@@ -64,6 +64,8 @@ describe("dashboard in a real browser", () => {
 
     // Observatory.
     await nav("Reliability Observatory");
+    await page.getByRole("heading", { name: "Timelines" }).waitFor();
+    await page.getByRole("img", { name: "Payment failure rate over time per variant" }).waitFor();
     await page.getByRole("heading", { name: "upi_first" }).waitFor();
     await page.locator(".banner .chip", { hasText: "SIMULATION" }).first().waitFor({ state: "visible", timeout: 5000 });
     await shot("04-reliability-observatory");

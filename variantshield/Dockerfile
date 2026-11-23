@@ -8,6 +8,7 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --include=optional || P
 COPY packages ./packages
 COPY apps ./apps
 COPY scripts ./scripts
+COPY examples ./examples
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 ENV VARIANTSHIELD_DB_PATH=/data/variantshield.db VARIANTSHIELD_BENCH_DIR=/data/bench HOST=0.0.0.0

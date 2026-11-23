@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { FlagsmithError, kindForStatus } from "./errors.ts";
 import { parseExperiment, parseExposures, parsePage, parseResults } from "./parse.ts";
 import type {
-  ExposureSnapshot, FlagsmithClientConfig, FlagsmithExperiment, FlagsmithExperimentStatus,
+  AssignmentConfig, AssignmentConfigState, ExposureSnapshot, FlagsmithClientConfig, FlagsmithExperiment, FlagsmithExperimentStatus,
   IdentityAssignment, ResultsSnapshot, SdkEvent,
 } from "./types.ts";
 
@@ -125,6 +126,37 @@ export class FlagsmithClient {
   async transition(id: number, action: "start" | "pause" | "complete"): Promise<FlagsmithExperiment> {
     const raw = await this.request("POST", this.envUrl(`/experiments/${id}/${action}/`), this.adminHeaders(), {});
     return parseExperiment(raw);
+  }
+
+  /**
+   * Reads what decides assignment for a multivariate flag in this environment: the default state and any segment override
+   * (an experiment's rollout is a system-segment override), with each option's percentage. The fingerprint changes when
+   * weights, enabled state or the option set change. Uses the Management API; verified against Flagsmith's own endpoints.
+   */
+  async getAssignmentConfig(featureName: string): Promise<AssignmentConfig> {
+    const headers = this.adminHeaders();
+    const env = (await this.request("GET", `${this.base}/api/v1/environments/${encodeURIComponent(this.cfg.environmentKey)}/`, headers)) as { id?: unknown; name?: unknown; project?: unknown };
+    if (typeof env?.id !== "number" || typeof env.project !== "number") throw new FlagsmithError("contract", "Unexpected Flagsmith response: environment has no id/project", { detail: env });
+    const q = new URLSearchParams({ environment: String(env.id), feature_name: featureName });
+    const raw: unknown[] = [];
+    let url: string | null = `${this.base}/api/v1/features/featurestates/?${q}`;
+    for (let page = 0; url && page < 5; page++) { const { results, next } = parsePage(await this.request("GET", url, headers)); raw.push(...results); url = next; }
+    if (raw.length === 0) throw new FlagsmithError("not_found", `Flagsmith has no feature state for "${featureName}" in this environment`);
+    const featureId = (raw[0] as { feature?: unknown }).feature;
+    if (typeof featureId !== "number") throw new FlagsmithError("contract", "Unexpected Flagsmith response: feature state has no feature id", { detail: raw[0] });
+    const feature = (await this.request("GET", `${this.base}/api/v1/projects/${env.project}/features/${featureId}/`, headers)) as { multivariate_options?: { id: number; string_value?: string | null; integer_value?: number | null; boolean_value?: boolean | null }[] };
+    const valueOf = new Map((feature.multivariate_options ?? []).map((o) => [o.id, String(o.string_value ?? o.integer_value ?? o.boolean_value ?? o.id)]));
+    const states: AssignmentConfigState[] = raw.map((r) => {
+      const s = r as { enabled?: unknown; feature_segment?: unknown; feature_state_value?: unknown; multivariate_feature_state_values?: { multivariate_feature_option: number; percentage_allocation: number }[] };
+      const v = s.feature_state_value;
+      const dv = typeof v === "object" && v !== null ? ((v as { string_value?: unknown }).string_value ?? null) : v ?? null;
+      return {
+        segmentId: typeof s.feature_segment === "number" ? s.feature_segment : null, enabled: s.enabled === true, defaultValue: dv === null ? null : String(dv),
+        weights: (s.multivariate_feature_state_values ?? []).map((w) => ({ value: valueOf.get(w.multivariate_feature_option) ?? String(w.multivariate_feature_option), percentage: w.percentage_allocation })).sort((a, b) => a.value.localeCompare(b.value)),
+      };
+    }).sort((a, b) => (a.segmentId ?? -1) - (b.segmentId ?? -1));
+    const fingerprint = createHash("sha256").update(JSON.stringify({ f: featureName, e: env.id, states })).digest("hex").slice(0, 16);
+    return { featureName, environmentId: env.id, environmentName: typeof env.name === "string" ? env.name : String(env.id), states, fingerprint };
   }
 
   /** Reads the variant Flagsmith actually serves to an identity (SDK identities endpoint). */

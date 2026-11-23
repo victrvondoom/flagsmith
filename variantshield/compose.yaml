@@ -14,6 +14,18 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:8787:8787"]
     volumes: [variantshield-data:/data]
+  surfaces:
+    build: .
+    restart: unless-stopped
+    command: ["node", "apps/surfaces/src/main.ts"]
+    env_file: .env
+    environment:
+      SURFACES_HOST: 0.0.0.0
+      FLAGSMITH_URL: ${FLAGSMITH_URL:-http://host.docker.internal:8000}
+      VARIANTSHIELD_URL: http://variantshield:8787
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:8801-8804:8801-8804"]
+    depends_on: { variantshield: { condition: service_healthy } }
   checkout-demo:
     build: .
     restart: unless-stopped
