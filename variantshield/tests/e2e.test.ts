@@ -55,10 +55,12 @@ const wave = async (prefix: string, users: number): Promise<void> => {
 describe("end to end: Flagsmith (contract double) -> checkout demo -> telemetry -> verdict -> human-approved pause", () => {
   it("safe_then_dangerous_winner__is_detected_and_pausable_after_human_confirmation", async () => {
     // Plan imported from Flagsmith's experiment list, with demo-scale sample floors for the 5xx metric.
+    // Latency is deliberately loosened here: the demo's simulated latency is ~1 ms, so measured p95 is dominated by event-loop
+    // scheduling noise and would make this test depend on runner speed. Latency regressions are covered by the engine tests and the bench.
     assert.equal((await admin("POST", "/api/plans/import-flagsmith", {})).json.imported, 1);
     const plan = (await admin("GET", "/api/plans")).json.plans[0];
     assert.equal(plan.flagsmithExperimentId, 7);
-    await admin("PATCH", `/api/plans/${plan.id}`, { key: "7", guardrailOverrides: { rules: { http_5xx_rate: { minDenominator: 150 } } } });
+    await admin("PATCH", `/api/plans/${plan.id}`, { key: "7", guardrailOverrides: { rules: { http_5xx_rate: { minDenominator: 150 }, checkout_p95_latency_ms: { warnRatio: 8, breachRatio: 10, minSamples: 100 } } } });
     fake.results.set(7, sampleResultsPayload());
 
     // Phase 1: healthy traffic. Flagsmith serves variants; the demo exposes and converts through Flagsmith.
