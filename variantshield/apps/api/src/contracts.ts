@@ -120,6 +120,24 @@ export const MAX_FUTURE_SKEW_MS = 60_000;
 const OBS_KEY_SEP = "|";
 const obsKey = (contractId: string, surfaceId: string, observationId: string): string => `${contractId}${OBS_KEY_SEP}${surfaceId}${OBS_KEY_SEP}${observationId}`;
 
+/**
+ * Per-contract row count for the storage quota. A COUNT over 500k rows costs ~23 ms on the request thread, so it is kept in
+ * memory, bumped on every accepted observation, and re-read from the database at most every COUNT_REFRESH_MS (which also
+ * picks up retention purges and other processes).
+ */
+const COUNT_REFRESH_MS = 30_000;
+const storedCounts = new Map<string, { n: number; at: number }>();
+function storedObservationCount(ctx: Ctx, contractId: string): number {
+  const key = `${ctx.db.id}:${contractId}`;
+  const now = Date.now();
+  const hit = storedCounts.get(key);
+  if (hit && now - hit.at < COUNT_REFRESH_MS) return hit.n;
+  if (storedCounts.size >= 1000) storedCounts.delete(storedCounts.keys().next().value as string);
+  const n = Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_observations WHERE contract_id = ? AND source = 'real'", contractId)?.n ?? 0);
+  storedCounts.set(key, { n, at: now });
+  return n;
+}
+
 export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?: boolean; bound?: { contractId: string; surfaceId: string } | null; charge?: (units: number) => void } = {}): { accepted: number; duplicate: number; rejected: number; unlinked: number; results: ObservationResult[] } {
   if (!Array.isArray(batch) || batch.length === 0) throw new HttpError(400, "validation_failed", "observations must be a non-empty array");
   if (batch.length > MAX_OBSERVATION_BATCH) throw new HttpError(400, "validation_failed", `at most ${MAX_OBSERVATION_BATCH} observations per request`);
@@ -130,7 +148,7 @@ export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?
     // Storage is bounded per contract, so a flood of observations cannot fill the disk.
     const contractsInBatch = [...new Set(batch.map((b) => (typeof b === "object" && b !== null ? String((b as Record<string, unknown>).contractId) : "")))];
     for (const cid of contractsInBatch) {
-      const n = Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_observations WHERE contract_id = ? AND source = 'real'", cid)?.n ?? 0);
+      const n = storedObservationCount(ctx, cid);
       if (n + batch.length > ctx.cfg.maxObservationsPerContract) throw new HttpError(429, "observation_quota_exceeded", `Contract ${cid.slice(0, 64)} holds ${n} observations; the limit is ${ctx.cfg.maxObservationsPerContract}. Older data is purged by retention.`, { retryAfterMs: 60_000 });
     }
   }
@@ -200,7 +218,11 @@ export function ingestObservations(ctx: Ctx, batch: unknown, opts: { simulation?
       if (prev) for (const d of observationDrift(rowToObservation(prev), obs)) insertDrift(ctx, contractId, obs.contractVersion, obs.contractVersion, d, obs.source, `${surfaceId}:${subjectRef}`);
     }
   });
-  for (const cid of touched) invalidateReports(ctx, cid);
+  for (const cid of touched) {
+    invalidateReports(ctx, cid);
+    const c = storedCounts.get(`${ctx.db.id}:${cid}`);
+    if (c) c.n += out.results.filter((r) => r.status === "accepted").length;
+  }
   return out;
 }
 
@@ -271,7 +293,7 @@ export function invalidateReports(ctx: Ctx, contractId: string): void {
   const k = `${ctx.db.id}:${contractId}`;
   generations.set(k, (generations.get(k) ?? 0) + 1);
 }
-export function clearReportCache(): void { reportCache.clear(); generations.clear(); }
+export function clearReportCache(): void { reportCache.clear(); generations.clear(); storedCounts.clear(); }
 
 export function buildReport(ctx: Ctx, contractId: string, version?: number, canonical?: ReadonlyMap<string, string | null>): ContractReportResponse {
   const stored = getContractVersion(ctx, contractId, version);

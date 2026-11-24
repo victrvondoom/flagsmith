@@ -40,6 +40,7 @@ Set `VARIANTSHIELD_TRUST_PROXY=true` only when VariantShield is reachable exclus
 * A leaked per-surface key still lets its holder report false observations **for that one surface**, and the latest observation per subject and surface wins. Drift records the change, but a malicious surface can still mask its own violation. Rotate the ingest key to rotate all surface keys.
 * Identity tokens are bearer credentials until they expire (default 15 minutes). Keep the TTL short and send them only server to server.
 * SQLite and the single request thread cap throughput; a very large estate needs a queue and Postgres (not built).
-* Lockout is per client address: a determined attacker with many addresses is slowed, not stopped. Put a WAF or network allow-list in front of the admin routes.
+* Lockout is per client address and per credential class (admin, ingest or surface, issuer). During a lockout the correct credential is refused too, otherwise guesses would be unthrottled; behind a proxy without `VARIANTSHIELD_TRUST_PROXY` everyone shares one address, so a handful of bad requests locks everyone out for a few seconds. A determined attacker with many addresses is slowed, not stopped. Put a WAF or network allow-list in front of the admin routes.
 * The admin and viewer tokens are shared secrets with no per-user identity; the audit `actor` is self-declared. Put SSO in front for real attribution.
-* Container, compose and CodeQL changes are validated in CI, not in the authoring sandbox.
+* The compose stacks have been validated with `docker compose config` in CI but never brought up end to end.
+* The demo's session cookies are `Secure`, so the demo needs a browser that stores them over `http://127.0.0.1` (Chromium verified; Safari does not).

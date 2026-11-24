@@ -20,14 +20,19 @@ Open http://127.0.0.1:8787, paste the admin token.
 4. Run `assignment-mismatch`, `environment-mismatch`, `unlinked-identity` and look at Evidence and Contract drift.
 
 ## 3. Contracts with a real Flagsmith
+Order matters: surface keys can only be listed for a registered contract, so register first, then start the surfaces, then run the driver.
 ```bash
 export FLAGSMITH_URL=... FLAGSMITH_ENVIRONMENT_KEY=... FLAGSMITH_ADMIN_API_KEY=...
-npm run serve                      # terminal 1
+export VARIANTSHIELD_ADMIN_TOKEN=... VARIANTSHIELD_IDENTITY_ISSUER_KEY=... SURFACE_CONTROL_KEY=...
+npm run serve                                                                                        # terminal 1
+npm run vs -- contract register --file examples/checkout-journey.contract.yaml                       # terminal 2
 export SURFACE_KEYS=$(npm run -s vs -- contract surface-keys --contract checkout-journey --json | node -e 'process.stdin.on("data",d=>console.log(JSON.stringify(JSON.parse(d).keys)))')
-npm run surfaces                   # terminal 2: web, mobile, payment API, risk engine (each holds only its own key)
-node scripts/contract-demo.ts      # terminal 3: phases A healthy, B bad combination, C stale variant
+npm run surfaces                                                                                     # web, mobile, payment API, risk engine; each uses only its own key
+node scripts/contract-demo.ts --customers 12                                                         # terminal 3: phases A, B, C; exits 1 if any expectation fails
 ```
-The Integration page confirms the connection. The CLI gates CI: `npm run vs -- contract check --contract checkout-journey` exits 1 on a violation and 3 when incomplete.
+The driver reuses the registered v1 and says so; the environment fingerprint is only pinned if you register a new version and pass `--version <n>` to the driver and `CONTRACT_VERSION=<n>` to the surfaces. The **Integration** page confirms the connection. `npm run vs -- contract check --contract checkout-journey` exits 1 on a violation and 3 when incomplete.
+
+If you mistype the admin token about ten times in a row from one address, every request from that address (including correct ones) gets `429` for a few seconds.
 
 ## 4. Talking points
 Flagsmith's assignment is reused, never re-implemented. A missing observation is "delayed", not "failed". Unverifiable identity is `IDENTITY_UNLINKED`, never guessed. Contract versions are immutable; findings and drift are kept as history for a configurable period.

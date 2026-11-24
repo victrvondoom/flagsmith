@@ -34,8 +34,17 @@ const manifest = parseYaml(readFileSync(resolve(import.meta.dirname, "../example
 manifest.contract.version = Number(values.version);
 manifest.experiment.environment_fingerprint = environmentFingerprint(env.FLAGSMITH_ENVIRONMENT_KEY!);
 if (env.FLAGSMITH_EXPERIMENT_ID) manifest.experiment.flagsmith_experiment_id = Number(env.FLAGSMITH_EXPERIMENT_ID);
-const reg = await admin("POST", "/api/contracts", manifest);
-console.log(`${reg.status}: ${manifest.contract.id} v${manifest.contract.version}; ${reg.drift.length} change(s) vs the previous version`);
+// Surface keys can only be listed for a registered contract, so a typical run registers v1 with the CLI first. That copy has no
+// pinned environment fingerprint, so registering the pinned one under the same version is refused (versions are immutable).
+// In that case continue with the registered version and say what is not being checked.
+try {
+  const reg = await admin("POST", "/api/contracts", manifest);
+  console.log(`${reg.status}: ${manifest.contract.id} v${manifest.contract.version}; ${reg.drift.length} change(s) vs the previous version`);
+} catch (e) {
+  if (!String((e as Error).message).includes("contract_version_immutable")) throw e;
+  console.log(`v${manifest.contract.version} is already registered with different content, so it is used as it is.`);
+  console.log(`The environment fingerprint is NOT pinned in it; to pin it, register a new version and pass --version <n> here and CONTRACT_VERSION=<n> to the surfaces.`);
+}
 
 const runCustomers = async (prefix: string): Promise<{ variants: Record<string, number> }> => {
   const variants: Record<string, number> = {};

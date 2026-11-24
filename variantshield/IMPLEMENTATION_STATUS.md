@@ -45,6 +45,12 @@ Each item was measured or reproduced first, then fixed with a regression test (`
 | Incomplete headers, no slow-client limits | CSP `base-uri/form-action/object-src`, Permissions-Policy, COOP/CORP, HSTS behind HTTPS proxy; header, request and connection limits |
 | Compose and CI gaps | Hardened compose (read-only, no capabilities, limits, health checks); CI adds `npm audit`, compose validation, an image build and run check; CodeQL; Dependabot |
 
-Verification: `npm run check` passes, 248 tests, 0 failures.
+Follow-up found by re-checking my own work:
+* The quota check ran `COUNT(*)` over up to 500k rows on every ingest request (23 ms each, measured), which let a key holder saturate the event loop at the rate limit. It is now an in-memory count refreshed every 30 s.
+* One lockout bucket for all credential types let failed surface keys lock the admin out. Buckets are now per credential class.
+* `scripts/contract-demo.ts` failed with a 409 when the contract had already been registered with the CLI (the only order that works with per-surface keys). Fixed; the full demo was re-run end to end.
+* Demo cookies: `Secure` was added after a CodeQL finding; verified in Chromium only.
 
-Not done (needs design work or a real environment): moving off SQLite, a durable ingest queue, per-user SSO and audit identity, alerting/webhooks, an observation SDK, anonymous to authenticated linking, pinning GitHub Actions and the base image by digest (digests cannot be verified offline), and running the Docker/compose/CodeQL paths (CI will be the first real run).
+Verification: `npm run check` passes; CI on the head commit: `check`, `docker` and CodeQL `analyze` succeeded.
+
+Not done (needs design work or a real environment): moving off SQLite, a durable ingest queue, per-user SSO and audit identity, alerting/webhooks, an observation SDK, anonymous to authenticated linking, pinning GitHub Actions and the base image by digest (digests cannot be verified offline), and bringing the compose stack up end to end.

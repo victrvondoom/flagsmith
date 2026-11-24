@@ -40,7 +40,7 @@ Then `npm run serve`, open <http://127.0.0.1:8787>, sign in with the admin token
 
 ## Run it with a real Flagsmith
 
-See [`docs/guides/FLAGSMITH_SETUP.md`](docs/guides/FLAGSMITH_SETUP.md), [`SELF_HOSTING.md`](docs/guides/SELF_HOSTING.md) and the 14-step [`DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md). In short:
+See [`docs/guides/FLAGSMITH_SETUP.md`](docs/guides/FLAGSMITH_SETUP.md), [`SELF_HOSTING.md`](docs/guides/SELF_HOSTING.md) and the 14-step [`DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) (contracts: [`CONTRACTS_DEMO.md`](docs/guides/CONTRACTS_DEMO.md)). In short:
 
 ```bash
 export FLAGSMITH_URL=http://localhost:8000 FLAGSMITH_ENVIRONMENT_KEY=... FLAGSMITH_ADMIN_API_KEY=...
@@ -68,7 +68,7 @@ Declare how one experiment must behave across web, mobile, payment and risk serv
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 248 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `npm test` | 249 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
 | `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
 | `npm run surfaces` | four sample surfaces (web, mobile simulator, payment API, risk engine) on :8801-8804 |
 | `npm run demo:contracts` | live contract demo: healthy, bad combination, stale variant |
@@ -87,14 +87,17 @@ Copy [`.env.example`](.env.example). Required in production (24+ random characte
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 248 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 26, CLI 12, surfaces 8, contract UI journey 1 (includes the Integration page) |
-| Cross-surface contract demo against real Flagsmith (pre-restart run) | healthy contract, combination violation and stale-variant mismatch detected as expected; 12 subjects re-verified against Flagsmith |
+| 249 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, CLI 12, surfaces 8, contract UI journey 1 (includes the Integration page) |
+| Contract demo (`scripts/contract-demo.ts`) | passes all three phases in production mode with strong secrets and per-surface keys, over real HTTP between the API and the four surfaces, **against the bundled fake Flagsmith**. Against a real Flagsmith it passed before the per-surface-key change and has not been re-run since |
 | Assignment-config drift on real Flagsmith | **not run live**; covered by tests against a fake Flagsmith only |
 | Environment mismatch live | only simulation and tests (one real Flagsmith environment available) |
 | Playwright bench: clean run | 27/27 pass; each of 4 injected faults fails only the targeted variant |
 | Real Flagsmith (built from source, PostgreSQL 16) | adapter, events, results parsing, lifecycle and the 14-step demo verified |
-| Docker / compose | **not run** (no Docker daemon in the authoring sandbox); files are syntax-checked only |
+| Docker image | CI job `docker` passes: image builds, starts read-only with all capabilities dropped, passes its health check, and refuses a weak production secret. `compose.yaml` and `compose.with-flagsmith.yaml` pass `docker compose config`; the stack itself was never brought up |
+| CodeQL | CI `analyze` passes on the head commit; the one finding (demo cookies without `Secure`) is fixed |
+| Demo cookies | `Secure` cookies verified to persist in Chromium over `http://127.0.0.1`; Firefox and WebKit are not installed here and are untested (Safari does not store `Secure` cookies over plain HTTP) |
 | Flagsmith Cloud, ClickHouse/Databricks warehouses | not tested |
+| Measured on 20k observations | `/report` 1.9 s to 0.23 s cold after removing two quadratic loops; the repeat read is served from a 5 s cache |
 
 ## Known limitations
 

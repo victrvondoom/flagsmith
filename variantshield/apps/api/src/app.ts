@@ -327,7 +327,8 @@ export function createApp(ctx: Ctx): App {
         throw new HttpError(404, "not_found", "Not found");
       }
       const ip = clientIp(req, ctx.cfg.trustProxy);
-      const failKey = `fail:${ip}`;
+      // One lockout bucket per credential class and client, so failed surface keys cannot lock the admin out (and vice versa).
+      const failKey = `fail:${route.auth === "surface" ? "ingest" : route.auth}:${ip}`;
       let surface: SurfaceBinding | null = null;
       let charge: (units: number) => void = () => {};
       if (route.auth !== "public") {

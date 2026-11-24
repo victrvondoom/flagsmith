@@ -52,6 +52,12 @@ describe("security: authentication abuse", () => {
     assert.ok(Number(locked.headers.get("retry-after")) >= 1);
   });
 
+  it("auth__failed_surface_keys__do_not_lock_the_admin_out", async () => {
+    for (let i = 0; i < 11; i++) await call("POST", "/api/identity/verify", { token: "x" }, { "x-surface-key": "vss1.a.b.wrong" });
+    assert.equal((await call("POST", "/api/identity/verify", { token: "x" }, { "x-ingest-key": "wrong" })).status, 429);
+    assert.equal((await call("GET", "/api/board")).status, 200);
+  });
+
   it("auth__lockout_is_per_client_when_the_proxy_is_trusted", async () => {
     await app.server.close(); app.ctx.db.close();
     await start({ VARIANTSHIELD_TRUST_PROXY: "true" });
