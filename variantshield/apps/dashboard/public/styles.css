@@ -106,3 +106,10 @@ td ul { margin: 0; padding-left: 16px; }
 .topbar .ctl { min-width: 0; max-width: 100%; flex-wrap: wrap; }
 .ctl select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
 #integrity { flex-wrap: wrap; }
+/* WebKit sizes a <select> by its longest option and ignores max-width inside a wrapping flex row (CI measured 391px of content in a
+   362px box at a 390px viewport). On narrow screens the selector takes its own full-width line instead. */
+.ctl select { box-sizing: border-box; }
+@media (max-width: 700px) {
+  .topbar .ctl { width: 100%; }
+  .topbar .ctl select { flex: 1 1 100%; width: 100%; }
+}
