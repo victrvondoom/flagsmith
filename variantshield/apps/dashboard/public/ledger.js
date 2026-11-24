@@ -8,6 +8,8 @@ const decisionClass = { ship: "ok", extend: "none", hold: "WARNING", pause: "BRE
 const simChip = (src) => (src === "simulation" ? chip("SIMULATION", "SIM") : null);
 const jsonShort = (v) => (typeof v === "string" ? v : JSON.stringify(v));
 const KEY = "vs.lscope";
+// Simulated plan titles already say SIMULATION; do not stack a second tag in front.
+const simLabel = (isSim, text) => (isSim && !/simulation/i.test(text) ? `[SIM] ${text}` : text);
 
 function readScope(plans, contracts) {
   let saved = ""; try { saved = sessionStorage.getItem(KEY) || ""; } catch { /* storage unavailable */ }
@@ -27,8 +29,8 @@ export async function ledgerView({ navigate }) {
   root.append(h("div", { class: "topbar" }, h("h1", {}, "Decision Ledger"),
     scope ? h("div", { class: "ctl" }, h("label", { for: "lscope", class: "nomargin" }, "Experiment or contract"),
       h("select", { id: "lscope", onchange: (e) => { try { sessionStorage.setItem(KEY, e.target.value); } catch { /* storage unavailable */ } rerender(); } },
-        plans.length ? h("optgroup", { label: "Experiment plans" }, plans.map((p) => h("option", { value: `plan:${p.id}`, selected: scope.type === "plan" && scope.id === String(p.id) }, `${p.isSimulation ? "[SIM] " : ""}${p.title}`))) : null,
-        contracts.length ? h("optgroup", { label: "Cross-surface contracts" }, contracts.map((c) => h("option", { value: `contract:${c.id}`, selected: scope.type === "contract" && scope.id === c.id }, `${c.isSimulation ? "[SIM] " : ""}${c.id}`))) : null)) : null));
+        plans.length ? h("optgroup", { label: "Experiment plans" }, plans.map((p) => h("option", { value: `plan:${p.id}`, selected: scope.type === "plan" && scope.id === String(p.id) }, simLabel(p.isSimulation, p.title)))) : null,
+        contracts.length ? h("optgroup", { label: "Cross-surface contracts" }, contracts.map((c) => h("option", { value: `contract:${c.id}`, selected: scope.type === "contract" && scope.id === c.id }, simLabel(c.isSimulation, c.id)))) : null)) : null));
   root.append(h("p", { class: "muted" }, "The preserved record of what was known and who decided what. Entries cannot be edited or deleted, each is chained to the one before and signed by the server. A decision is official only after a different person approves it. The assistant answers from these records with citations; it is rule-based, not a language model, and it cannot record or approve anything."));
   if (!scope) { root.append(h("div", { class: "card" }, h("h2", {}, "Nothing to record yet"), h("p", { class: "muted" }, "Create an experiment plan or register a contract first (Command Center runs a simulation in one click)."))); return root; }
 

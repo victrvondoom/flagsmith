@@ -113,3 +113,6 @@ td ul { margin: 0; padding-left: 16px; }
   .topbar .ctl { width: 100%; }
   .topbar .ctl select { flex: 1 1 100%; width: 100%; }
 }
+/* WebKit does not clip the text inside a <select> that is narrower than its longest option: the overflow leaks into the page's
+   scrollable area (CI measured 29px at a 390px viewport while the select box itself fit). Clipping the select fixes it. */
+select { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
