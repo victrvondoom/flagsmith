@@ -72,7 +72,7 @@ The **Decision Ledger** (`#/ledger`) remembers what was known and who decided wh
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 295 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `npm test` | 299 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
 | `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
 | `npm run mcp` | MCP server on stdio (set `VARIANTSHIELD_MCP_TOKEN`) |
 | `npm run vs -- ledger verify` | verify the decision ledger (`--file export.json --expect-head <hash>` for an offline check) |
@@ -90,13 +90,17 @@ Copy [`.env.example`](.env.example). Required in production (24+ random characte
 
 ## Verification status (what was actually run)
 
+The full, dated record of what was executed against a real Flagsmith (commands, numbers, defects found) is in [`docs/RUN_LOG.md`](docs/RUN_LOG.md).
+
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 295 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, ledger API 33, MCP 11, ledger UI journey 1, CLI 13, surfaces 8, contract UI journey 1 (includes the Integration page) |
-| Contract demo (`scripts/contract-demo.ts`) | passes all three phases in production mode with strong secrets and per-surface keys, over real HTTP between the API and the four surfaces, **against the bundled fake Flagsmith**. Against a real Flagsmith it passed before the per-surface-key change and has not been re-run since |
-| Assignment-config drift on real Flagsmith | **not run live**; covered by tests against a fake Flagsmith only |
-| Environment mismatch live | only simulation and tests (one real Flagsmith environment available) |
+| 299 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, ledger API 34, MCP 11, cross-browser smoke 2, ledger UI journey 1, CLI 14, surfaces 8, contract UI journey 1 (includes the Integration page) |
+| Contract demo (`scripts/contract-demo.ts`) | passes all three phases against a **real Flagsmith** in production mode with per-surface keys (16 customers re-verified against Flagsmith) |
+| Assignment-config drift on real Flagsmith | **run live**: changing the running experiment's weights moved the fingerprint `2b5fc810...` to `acfe9129...`, one drift record; restoring returned it |
+| Environment mismatch live | **run live** with a second real Flagsmith environment: `ENVIRONMENT_MISMATCH` raised from the differing fingerprints |
+| Reliability demo and human-approved pause | **run live** against a real Flagsmith: `WINNER_BUT_UNSAFE`, pause confirmed by an independent re-read |
+| MCP | a real Claude Code session connected and called a tool through the server |
 | Playwright bench: clean run | 27/27 pass; each of 4 injected faults fails only the targeted variant |
 | Real Flagsmith (built from source, PostgreSQL 16) | adapter, events, results parsing, lifecycle and the 14-step demo verified |
 | Docker image | CI job `docker` passes: image builds, starts read-only with all capabilities dropped, passes its health check, and refuses a weak production secret. `compose.yaml` and `compose.with-flagsmith.yaml` pass `docker compose config`; the stack itself was never brought up |

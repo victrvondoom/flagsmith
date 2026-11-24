@@ -8,7 +8,7 @@ import { mulberry32 } from "../packages/guardrail-engine/src/fixtures.ts";
  */
 const { values } = parseArgs({ options: {
   api: { type: "string", default: "http://127.0.0.1:8787" }, demo: { type: "string", default: "http://127.0.0.1:8791" },
-  users: { type: "string", default: "900" }, window: { type: "string", default: "60000" }, approve: { type: "string" },
+  users: { type: "string", default: "900" }, plan: { type: "string" }, window: { type: "string", default: "60000" }, approve: { type: "string" },
 } });
 const env = process.env;
 for (const k of ["VARIANTSHIELD_ADMIN_TOKEN", "DEMO_CONTROL_KEY"]) if (!env[k]) { console.error(`Set ${k}`); process.exit(2); }
@@ -26,8 +26,9 @@ const users = Number(values.users);
 say("1-3. Connect to Flagsmith and import the experiment");
 const imported = await api("POST", "/api/plans/import-flagsmith", {});
 const plans = (await api("GET", "/api/plans")).plans.filter((p: any) => !p.isSimulation && p.flagsmithExperimentId !== null);
-const plan = plans[0];
-if (!plan) throw new Error("No Flagsmith experiment found. See docs/guides/FLAGSMITH_SETUP.md");
+// --plan <Flagsmith experiment id> picks the experiment the demo app serves; the default is the first imported one.
+const plan = values.plan === undefined ? plans[0] : plans.find((p: any) => String(p.flagsmithExperimentId) === values.plan);
+if (!plan) throw new Error(values.plan === undefined ? "No Flagsmith experiment found. See docs/guides/FLAGSMITH_SETUP.md" : `No imported plan is linked to Flagsmith experiment ${values.plan}`);
 console.log(`imported ${imported.imported}; using plan #${plan.id} "${plan.title}" -> Flagsmith experiment ${plan.flagsmithExperimentId}`);
 // Demo-scale sample floors and a short window so the demo finishes in minutes. Production defaults are in the engine.
 await api("PATCH", `/api/plans/${plan.id}`, { key: String(plan.flagsmithExperimentId), guardrailOverrides: { windowMs, rules: {

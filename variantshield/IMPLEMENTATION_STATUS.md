@@ -68,4 +68,11 @@ What "official" means: approved by a second named actor in this ledger. It is no
 
 Limits: the actor is a caller-supplied name; newest-entry truncation needs an externally stored head; the assistant is pattern-based and answers only the listed intents; MCP prompt-injection risk is reduced, not removed. Not tested with a real MCP client (the tests speak the protocol directly); not tested in Firefox or WebKit.
 
-Verification: `npm run check` passes, 295 tests, 0 failures.
+Verification: `npm run check` passes, 299 tests, 0 failures.
+
+## Full run against a real Flagsmith (2026-11-24)
+Everything that could be executed was executed; the dated record is [`docs/RUN_LOG.md`](docs/RUN_LOG.md). This supersedes earlier "not verified live" notes for: contract demo after the hardening, assignment-config drift, environment mismatch, human-approved resume and pause, the ledger on real data, and a real MCP client.
+
+Defects found only by running it, now fixed with regression tests: CLI output truncated at 64 KiB when piped; the assistant treating an empty live window as an all-clear; `live-demo.ts` unable to pick its plan. Observed and not explained: one `WARNING` in a healthy phase right after a previous faulty run.
+
+Still not run: the compose stack (no Docker daemon), Firefox and WebKit locally (CI job `browsers` added), Flagsmith Cloud, ClickHouse and Databricks.

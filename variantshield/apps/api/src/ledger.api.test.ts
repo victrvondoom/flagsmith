@@ -334,6 +334,30 @@ describe("context layer and assistant", () => {
     assert.ok(risks.citations.some((c: any) => c.type === "finding"));
   });
 
+  it("recommend__an_empty_live_window_after_a_bad_snapshot__is_not_an_all_clear", async () => {
+    // Given a plan whose newest evidence snapshot said WINNER_BUT_UNSAFE, an official PAUSE, and a live window that has emptied
+    const id = await simPlan("dangerous-winner");
+    await call("POST", `/api/plans/${id}/evidence`);
+    const p = await propose(id);
+    await resolve(p.json.entry.seq, "approve", "bob");
+    const brief = await buildBrief(app.ctx, { type: "plan", id: String(id) });
+    assert.equal((brief.facts as any).evidence.latest.outcome, "WINNER_BUT_UNSAFE");
+    const emptied = { ...brief, facts: { ...brief.facts, verdict: { ...(brief.facts as any).verdict, outcome: "INSUFFICIENT_EVIDENCE", headline: "Insufficient evidence: reliability cannot be judged yet." } } };
+    // When asked whether to ship
+    const r = recommend(emptied as never);
+    // Then it does not suggest extending as if nothing happened: the official decision stands and the snapshot is cited
+    assert.equal(r.decision, "pause");
+    assert.match(r.rationale, /not an all-clear/);
+    assert.match(r.rationale, /Official decision #\d+ \(PAUSE\) stands/);
+    assert.ok(r.cites.some((c) => c.type === "evidence"));
+    // And without an official decision it holds rather than extends
+    const noOfficial = { ...emptied, officialDecision: null };
+    assert.equal(recommend(noOfficial as never).decision, "hold");
+    // A plan that never had a bad snapshot still extends
+    const quiet = { ...emptied, facts: { ...emptied.facts, evidence: { ...(emptied.facts as any).evidence, latest: null } }, officialDecision: null };
+    assert.equal(recommend(quiet as never).decision, "extend");
+  });
+
   it("brief__a_plan_includes_contracts_that_check_the_same_flag", async () => {
     await call("POST", "/api/contracts", manifest());
     const created = await call("POST", "/api/plans", { title: "Checkout journey", treatmentVariants: ["upi_first"], featureKey: "checkout_journey_variant" });

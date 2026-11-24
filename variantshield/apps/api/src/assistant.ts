@@ -97,6 +97,15 @@ export function recommend(b: Brief): { decision: Decision; rationale: string; bl
   }
   const o = x.verdict.outcome as string;
   cites.push({ type: "fact", ref: "verdict.outcome" });
+  // An empty or thin live window is not an all-clear. Fall back on the newest stored evidence, and on the official decision if any.
+  const latest = x.evidence?.latest as { id: number; at: number; outcome: string | null } | null | undefined;
+  if (o === "INSUFFICIENT_EVIDENCE" && latest?.outcome && latest.outcome !== "INSUFFICIENT_EVIDENCE") {
+    const base = `The live data window is empty or too small right now, which is not an all-clear: evidence snapshot #${latest.id} (${new Date(latest.at).toISOString().slice(0, 16).replace("T", " ")} UTC) recorded ${latest.outcome.replaceAll("_", " ")}.`;
+    cites.push({ type: "evidence", ref: `#${latest.id}` });
+    const off = b.officialDecision;
+    if (off) { cites.push({ type: "ledger", ref: `#${off.resolutionSeq}` }); return { decision: off.decision as Decision, rationale: `${base} Official decision #${off.seq} (${off.decision.toUpperCase()}) stands until new evidence supersedes it.`, blockers: ["no current data to supersede the last evidence"], cites }; }
+    return { decision: "hold", rationale: `Hold: ${base} Capture fresh evidence before deciding.`, blockers: ["no current data; the last snapshot was not an all-clear"], cites };
+  }
   if (o === "WINNER_BUT_UNSAFE") return { decision: "pause", rationale: `Pause: ${x.verdict.headline} Investigate the breached guardrails before any rollout.`, blockers: ["reliability guardrail breach"], cites };
   if (o === "REQUIRES_INVESTIGATION") return { decision: "hold", rationale: `Hold: ${x.verdict.headline}`, blockers: ["verdicts disagree or a data source is unavailable"], cites };
   if (o === "INSUFFICIENT_EVIDENCE" || o === "HEALTHY_BUT_INCONCLUSIVE") return { decision: "extend", rationale: `Extend: ${x.verdict.headline} Keep collecting data.`, blockers: [], cites };

@@ -155,4 +155,18 @@ describe("variantshield CLI", () => {
     assert.equal(r.code, 1); assert.equal(JSON.parse(r.stdout).ok, false);
     assert.equal((await run(["ledger", "verify", "--file", join(dir, "nope.json")])).code, 2);
   });
+
+  it("output__a_report_larger_than_the_pipe_buffer__is_written_completely_before_exit", async () => {
+    // Given a real-sized contract report: 250 subjects make the JSON well over 64 KiB
+    const H = { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" };
+    const { parse } = await import("yaml");
+    await fetch(`${url}/api/contracts`, { method: "POST", headers: H, body: JSON.stringify({ ...parse(readFileSync(EXAMPLE, "utf8")), contract: { ...parse(readFileSync(EXAMPLE, "utf8")).contract, id: "big-report" } }) });
+    const now = Date.now();
+    for (let b = 0; b < 1; b++) app.ctx.db.tx(() => { for (let i = 0; i < 250; i++) { const n = b * 250 + i; app.ctx.db.run("INSERT INTO contract_observations (observation_id, payload_hash, contract_id, contract_version, experiment_key, environment, assignment_flag, assigned_variant, surface_id, subject_ref, identity_status, observed_at, received_at, features, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", `big-report|web-checkout|o${n}`, "h", "big-report", 1, "checkout_journey", "production", "checkout_journey_variant", "control", "web-checkout", `sub_${String(n).padStart(32, "x")}`, "verified", now - 1000 - n, now, JSON.stringify({ checkout_ui: "classic" }), "real"); } });
+    // When the CLI output is piped (execFile uses a pipe) and the process exits right after printing
+    const r = await run(["contract", "report", "--contract", "big-report", "--json", "--allow-incomplete"]);
+    // Then the JSON is complete and parseable
+    assert.ok(r.stdout.length > 70_000, `expected a large report, got ${r.stdout.length} bytes`);
+    assert.equal(JSON.parse(r.stdout).report.contractId, "big-report");
+  });
 });

@@ -60,3 +60,23 @@ jobs:
           curl -fsS http://127.0.0.1:8787/health
           docker logs vs
           docker rm -f vs
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # WebKit is informational: Safari refuses Secure cookies over plain HTTP in some versions, which this job exists to find out.
+        browser: [firefox, webkit]
+    continue-on-error: ${{ matrix.browser == 'webkit' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: variantshield/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Cross-browser smoke test (${{ matrix.browser }})
+        run: PW_BROWSER=${{ matrix.browser }} node --experimental-sqlite --disable-warning=ExperimentalWarning --test tests/browsers.test.ts

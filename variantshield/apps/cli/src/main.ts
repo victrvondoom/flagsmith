@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import { verifyChain, type LedgerEntry } from "../../api/src/ledger.ts";
 import { parseArgs } from "node:util";
 import { environmentFingerprint, parseContract, parseManifestText, type Contract, type ContractIssue } from "../../../packages/contracts/src/index.ts";
@@ -32,10 +32,27 @@ const USAGE = `Usage:
 Environment: VARIANTSHIELD_URL, VARIANTSHIELD_ADMIN_TOKEN
 Exit codes: 0 ok, 1 invalid or violation, 2 usage/connection error, 3 incomplete or no data`;
 
+
+/**
+ * Synchronous output. `console.log` to a pipe is asynchronous in Node, so calling process.exit right after printing a large
+ * report truncated it at the pipe buffer (64 KiB) when piped to another program. Writing synchronously and retrying on
+ * EAGAIN guarantees the whole text is out before the process exits.
+ */
+function writeAll(fd: number, text: string): void {
+  const buf = Buffer.from(`${text}\n`);
+  let off = 0;
+  while (off < buf.length) {
+    try { off += writeSync(fd, buf, off); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === "EAGAIN") continue; if ((e as NodeJS.ErrnoException).code === "EPIPE") return; throw e; }
+  }
+}
+const say = (text: string): void => writeAll(1, text);
+const sayErr = (text: string): void => writeAll(2, text);
+
 type Out = { json: boolean };
-const print = (o: Out, human: string, data: unknown): void => console.log(o.json ? JSON.stringify(data, null, 2) : human);
+const print = (o: Out, human: string, data: unknown): void => say(o.json ? JSON.stringify(data, null, 2) : human);
 const fail = (code: number, message: string, o: Out = { json: false }): never => {
-  if (o.json) console.log(JSON.stringify({ error: message })); else console.error(message);
+  if (o.json) say(JSON.stringify({ error: message })); else sayErr(message);
   process.exit(code);
 };
 
@@ -97,7 +114,7 @@ async function ledgerCommand(sub: string | undefined, rest: string[]): Promise<v
     if (r.status !== 200) return fail(1, `${r.json?.error?.code ?? r.status}: ${r.json?.error?.message ?? "export failed"}`, o);
     const body = JSON.stringify(r.json, null, 2);
     if (typeof v.out === "string") { writeFileSync(v.out, body); print(o, `Wrote ${r.json.entries.length} entries to ${v.out}. Head ${r.json.head}. Store the head somewhere else; it is the only way to detect removal of the newest entries.`, { entries: r.json.entries.length, head: r.json.head, out: v.out }); }
-    else console.log(body);
+    else say(body);
     return;
   }
   if (typeof v.file === "string") {
@@ -124,7 +141,7 @@ async function main(argv: string[]): Promise<void> {
   if (group === "env-fingerprint") {
     const key = sub;
     if (!key) return fail(2, USAGE);
-    console.log(environmentFingerprint(key));
+    say(environmentFingerprint(key));
     return;
   }
   if (group === "ledger") return ledgerCommand(sub, rest);
@@ -170,4 +187,4 @@ async function main(argv: string[]): Promise<void> {
   process.exit(exitForStatus(res.json.report.status, values["allow-incomplete"] === true));
 }
 
-main(process.argv.slice(2)).catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(2); });
+main(process.argv.slice(2)).catch((e) => { sayErr(e instanceof Error ? e.message : String(e)); process.exit(2); });

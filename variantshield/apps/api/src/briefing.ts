@@ -60,7 +60,15 @@ function contractFacts(ctx: Ctx, contractId: string): Record<string, unknown> {
 async function planBrief(ctx: Ctx, plan: Plan): Promise<Pick<Brief, "title" | "facts" | "keyFacts" | "source" | "openQuestions">> {
   const src = plan.isSimulation ? "simulation" : "real";
   const v = await verdictFor(ctx, plan, src);
-  const evidence = ctx.db.all("SELECT id, created_at FROM evidence WHERE plan_id = ? ORDER BY id DESC", plan.id);
+  const evidence = ctx.db.all("SELECT id, created_at, payload FROM evidence WHERE plan_id = ? ORDER BY id DESC", plan.id);
+  // The newest stored snapshot. Live windows roll and empty out (a paused experiment has no new traffic), so the last snapshot is
+  // what the assistant must fall back on instead of treating "no recent data" as "all clear".
+  let latestEvidence: { id: number; at: number; outcome: string | null; headline: string | null } | null = null;
+  if (evidence[0]) {
+    let snap: { verdict?: { outcome?: string; headline?: string } } = {};
+    try { snap = JSON.parse(String(evidence[0].payload)) as typeof snap; } catch { /* reported as unknown outcome */ }
+    latestEvidence = { id: Number(evidence[0].id), at: Number(evidence[0].created_at), outcome: snap.verdict?.outcome ?? null, headline: snap.verdict?.headline ?? null };
+  }
   // A contract belongs to a plan when it checks the same Flagsmith flag the plan experiments on.
   const contracts = listContracts(ctx).filter((c) => !c.isSimulation === !plan.isSimulation && plan.featureKey !== "").flatMap((c) => {
     try { return getContractVersion(ctx, c.id).contract.experiment.assignmentFlag === plan.featureKey ? [contractFacts(ctx, c.id)] : []; } catch { return []; }
@@ -73,7 +81,7 @@ async function planBrief(ctx: Ctx, plan: Plan): Promise<Pick<Brief, "title" | "f
     verdict: { outcome: v.verdict.outcome, headline: v.verdict.headline, recommendedAction: v.verdict.recommendedAction, experimentState: v.verdict.experimentVerdict.state, winner: v.verdict.experimentVerdict.winner, reliabilityStatus: v.verdict.reliabilityVerdict.status, evidence: v.verdict.evidence, caveats: v.verdict.caveats },
     variants,
     bench: benchSummary(ctx),
-    evidence: { count: evidence.length, latestId: evidence[0] ? Number(evidence[0].id) : null },
+    evidence: { count: evidence.length, latestId: evidence[0] ? Number(evidence[0].id) : null, latest: latestEvidence },
     contracts,
   };
   const keyFacts = {
