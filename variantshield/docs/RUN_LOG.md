@@ -37,13 +37,19 @@ Everything below was run on 2026-11-24 in the authoring sandbox. "Real Flagsmith
 3. `scripts/live-demo.ts` always used the first imported plan, which was not the experiment the demo app serves. Added `--plan`.
 4. An earlier run used a 30 s window with 500 users per phase and never left `INSUFFICIENT_DATA`; sample sizes matter, and the documented defaults (900 users, 60 s) were re-run.
 
+## Cross-browser, run in CI (the sandbox cannot download Firefox or WebKit)
+
+`tests/browsers.test.ts` runs in the CI job `browsers` for Firefox and WebKit (Chromium is covered by the main suites). On the head commit both pass: the dashboard signs in, renders the Decision Ledger, answers an assistant question and fits a 390 px screen without horizontal scroll, and the checkout demo's identity cookie comes back on the next request. WebKit failed first, and the failures were real:
+
+1. **Cookie.** WebKit does not send back a `Secure` cookie over `http://127.0.0.1`. The `Secure` flag had been added to satisfy a CodeQL finding, so on Safari the demo issued a new identity, and therefore a new variant, on every request. Now `Secure` is omitted only when the client is on loopback over plain HTTP; every remote client, and HTTPS behind a trusted proxy, still gets it. Each branch spells out its flags literally, which also cleared CodeQL's "missing httpOnly" finding.
+2. **Layout.** At 390 px the page scrolled 15 px sideways in WebKit only. Per-element measurement showed every box fit, and the overflow came from the text inside a `<select>`, which WebKit does not clip when the select is narrower than its longest option. Selects now clip their text, and a duplicated "[SIM] [SIMULATION]" label was shortened.
+
 ## Observed but not explained
 
 * In the second live run the "healthy" phase reported `reliability=WARNING`. The timeline shows a 16.4% failure bucket from the previous run a few minutes earlier in the same experiment's data, which is a plausible cause, but I did not prove it.
 
 ## Not run here
 
-* **Docker and compose.** No Docker daemon in the sandbox. CI builds and starts the image; the compose stacks are only validated with `docker compose config`, never brought up.
-* **Firefox and WebKit.** Browser downloads are blocked in the sandbox. `tests/browsers.test.ts` and the `browsers` CI job exist to run the dashboard and the `Secure`-cookie check in both; their results are recorded in the PR once CI has run.
+* **Docker and compose.** No Docker daemon in the sandbox. CI builds and starts the image (`docker` job); the compose stacks are only validated with `docker compose config`, never brought up.
 * Flagsmith Cloud and ClickHouse or Databricks warehouses.
 * Load beyond the single-process measurements in `IMPLEMENTATION_STATUS.md`.

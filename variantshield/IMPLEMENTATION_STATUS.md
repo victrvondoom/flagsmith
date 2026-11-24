@@ -75,4 +75,4 @@ Everything that could be executed was executed; the dated record is [`docs/RUN_L
 
 Defects found only by running it, now fixed with regression tests: CLI output truncated at 64 KiB when piped; the assistant treating an empty live window as an all-clear; `live-demo.ts` unable to pick its plan. Observed and not explained: one `WARNING` in a healthy phase right after a previous faulty run.
 
-Still not run: the compose stack (no Docker daemon), Firefox and WebKit locally (CI job `browsers` added), Flagsmith Cloud, ClickHouse and Databricks.
+Cross-browser: CI job `browsers` now runs Firefox and WebKit and passes (see `docs/RUN_LOG.md` for the two WebKit-only defects it found and the fixes). Still not run: the compose stack (no Docker daemon), Flagsmith Cloud, ClickHouse and Databricks.
