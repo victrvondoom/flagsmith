@@ -58,6 +58,13 @@ describe(`cross-browser smoke (${NAME})`, () => {
         offenders: all.filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 10).map((e) => `${name(e)} right=${Math.round(e.getBoundingClientRect().right)}`),
         // Content that spills out of its own box (long unbroken text, nowrap): invisible to getBoundingClientRect.
         spilling: all.filter((e) => e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX === "visible" && e.clientWidth > 0).slice(0, 12).map((e) => `${name(e)} scroll=${e.scrollWidth} client=${e.clientWidth} ws=${getComputedStyle(e).whiteSpace} text="${(e.textContent ?? "").trim().slice(0, 40)}"`),
+        // The topbar selector row, child by child (CI showed WebKit needing more room here than Chromium).
+        ctl: (() => {
+          const c = document.querySelector(".topbar .ctl") as HTMLElement | null;
+          if (!c) return "no .ctl";
+          const cs = getComputedStyle(c);
+          return { box: `client=${c.clientWidth} scroll=${c.scrollWidth} display=${cs.display} wrap=${cs.flexWrap} width=${cs.width}`, children: [...c.children].map((k) => { const r = k.getBoundingClientRect(), kc = getComputedStyle(k); return `${k.tagName.toLowerCase()} left=${Math.round(r.left)} right=${Math.round(r.right)} w=${Math.round(r.width)} cssWidth=${kc.width} flex=${kc.flex} minW=${kc.minWidth} maxW=${kc.maxWidth} box=${kc.boxSizing} appearance=${kc.getPropertyValue("-webkit-appearance") || kc.appearance} text="${(k.textContent ?? "").trim().slice(0, 30)}"`; }) };
+        })(),
         // The widest elements, whatever the reason.
         widest: all.map((e) => ({ n: name(e), r: Math.round(e.getBoundingClientRect().right) })).sort((a, b) => b.r - a.r).slice(0, 5).map((x) => `${x.n} right=${x.r}`),
       };
