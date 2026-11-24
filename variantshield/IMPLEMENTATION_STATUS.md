@@ -66,7 +66,7 @@ Requested as one use-case tool with a genuine workflow. Built:
 
 What "official" means: approved by a second named actor in this ledger. It is not an official Flagsmith product, and the upstream draft says so.
 
-Limits: the actor is a caller-supplied name; newest-entry truncation needs an externally stored head; the assistant is pattern-based and answers only the listed intents; MCP prompt-injection risk is reduced, not removed. Not tested with a real MCP client (the tests speak the protocol directly); not tested in Firefox or WebKit.
+Limits: the actor is a caller-supplied name; newest-entry truncation needs an externally stored head; the assistant is pattern-based and answers only the listed intents; MCP prompt-injection risk is reduced, not removed. The automated MCP tests speak the protocol directly; a real Claude Code session was connected and used it in the live run (see `docs/RUN_LOG.md`). Firefox and WebKit are covered by the `browsers` CI job.
 
 Verification: `npm run check` passes, 299 tests, 0 failures.
 
