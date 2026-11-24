@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { FlagsmithClient } from "../../../packages/flagsmith-adapter/src/index.ts";
 import { SAMPLE_EXPERIMENT, startFakeFlagsmith, type FakeFlagsmith } from "../../../packages/flagsmith-adapter/src/testing/fake-flagsmith.ts";
-import { createDemoApp, type DemoApp } from "./server.ts";
+import { createDemoApp, isSecureContext, type DemoApp } from "./server.ts";
 import type { EmitInput, Telemetry } from "./instrument.ts";
 
 let fake: FakeFlagsmith;
@@ -122,5 +122,23 @@ describe("checkout demo", () => {
     assert.match(await (await fetch(`${base}/`, as("user-guard"))).text(), /data-no-guard="true"/);
     await fetch(`${base}/__fault`, { method: "DELETE", headers: { "x-demo-key": KEY } });
     assert.doesNotMatch(await (await fetch(`${base}/`, as("user-guard"))).text(), /data-no-guard/);
+  });
+
+  it("cookie__loopback_over_http_is_not_secure_so_every_browser_keeps_it__https_or_remote_is_secure", async () => {
+    await boot({ allowUidHeader: false });
+    // Local development: no Secure (WebKit drops Secure cookies over plain HTTP), but still HttpOnly and SameSite
+    const local = (await fetch(`${base}/`)).headers.getSetCookie().find((c) => c.startsWith("vs_uid="))!;
+    assert.doesNotMatch(local, /Secure/);
+    assert.match(local, /HttpOnly/);
+    assert.match(local, /SameSite=Lax/);
+    // Behind a TLS-terminating proxy the request says so, and the cookie is Secure
+    const proxied = (await fetch(`${base}/`, { headers: { "x-forwarded-proto": "https" } })).headers.getSetCookie().find((c) => c.startsWith("vs_uid="))!;
+    assert.match(proxied, /; Secure/);
+    // The decision itself: remote clients always get Secure, loopback addresses in every notation do not
+    const req = (addr: string, proto?: string) => ({ headers: proto ? { "x-forwarded-proto": proto } : {}, socket: { remoteAddress: addr } }) as never;
+    for (const a of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "127.8.9.1"]) assert.equal(isSecureContext(req(a)), false, a);
+    for (const a of ["203.0.113.7", "2001:db8::1", "10.0.0.5", "192.168.1.9", undefined as unknown as string]) assert.equal(isSecureContext(req(a)), true, String(a));
+    assert.equal(isSecureContext(req("127.0.0.1", "https")), true);
+    assert.equal(isSecureContext(req("127.0.0.1", "http")), false);
   });
 });

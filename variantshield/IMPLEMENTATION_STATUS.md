@@ -49,7 +49,7 @@ Follow-up found by re-checking my own work:
 * The quota check ran `COUNT(*)` over up to 500k rows on every ingest request (23 ms each, measured), which let a key holder saturate the event loop at the rate limit. It is now an in-memory count refreshed every 30 s.
 * One lockout bucket for all credential types let failed surface keys lock the admin out. Buckets are now per credential class.
 * `scripts/contract-demo.ts` failed with a 409 when the contract had already been registered with the CLI (the only order that works with per-surface keys). Fixed; the full demo was re-run end to end.
-* Demo cookies: `Secure` was added after a CodeQL finding; verified in Chromium only.
+* Demo cookies: `Secure` was added after a CodeQL finding, then CI showed WebKit drops it over loopback HTTP (every request got a new identity). Now `Secure` unless the client is on loopback over plain HTTP.
 
 Verification: `npm run check` passes; CI on the head commit: `check`, `docker` and CodeQL `analyze` succeeded.
 

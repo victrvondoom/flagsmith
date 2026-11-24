@@ -104,8 +104,8 @@ The full, dated record of what was executed against a real Flagsmith (commands, 
 | Playwright bench: clean run | 27/27 pass; each of 4 injected faults fails only the targeted variant |
 | Real Flagsmith (built from source, PostgreSQL 16) | adapter, events, results parsing, lifecycle and the 14-step demo verified |
 | Docker image | CI job `docker` passes: image builds, starts read-only with all capabilities dropped, passes its health check, and refuses a weak production secret. `compose.yaml` and `compose.with-flagsmith.yaml` pass `docker compose config`; the stack itself was never brought up |
-| CodeQL | CI `analyze` passes on the head commit; the one finding (demo cookies without `Secure`) is fixed |
-| Demo cookies | `Secure` cookies verified to persist in Chromium over `http://127.0.0.1`; Firefox and WebKit are not installed here and are untested (Safari does not store `Secure` cookies over plain HTTP) |
+| CodeQL | CI `analyze` passed on the previous head; its one finding was the demo's cookies without `Secure`. The rule is now: `Secure` unless the client is on loopback over plain HTTP (see next row). Whether CodeQL accepts the conditional is not yet confirmed |
+| Demo cookies | CI **confirmed WebKit drops a `Secure` cookie over `http://127.0.0.1`**, which made the demo issue a new identity per request. The demo now omits `Secure` only for loopback clients over plain HTTP; remote and HTTPS clients always get it (unit-tested; Chromium verified locally; Firefox and WebKit run in CI) |
 | Flagsmith Cloud, ClickHouse/Databricks warehouses | not tested |
 | Measured on 20k observations | `/report` 1.9 s to 0.23 s cold after removing two quadratic loops; the repeat read is served from a 5 s cache |
 

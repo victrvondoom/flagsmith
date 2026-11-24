@@ -11,8 +11,8 @@ import { createDemoApp, type DemoApp } from "../apps/checkout-demo/src/server.ts
 
 /**
  * Cross-browser smoke test. The main UI suites run in Chromium. Set PW_BROWSER=firefox or webkit (CI does) to check that the
- * dashboard renders and that the demo's `Secure` cookie survives over http://127.0.0.1 in that engine. Safari/WebKit has
- * historically refused Secure cookies over plain HTTP, which would make the demo hand every request a fresh identity.
+ * dashboard renders and that the demo's identity cookie survives over http://127.0.0.1 in that engine. WebKit refuses Secure cookies over plain
+ * HTTP (CI confirmed it), which is why the demo omits Secure for loopback clients only.
  */
 process.env.VARIANTSHIELD_LOG = "off";
 const NAME = (process.env.PW_BROWSER ?? "chromium") as "chromium" | "firefox" | "webkit";
@@ -48,21 +48,25 @@ describe(`cross-browser smoke (${NAME})`, () => {
     await page.locator("#integrity").getByText("LEDGER VERIFIED").waitFor();
     await page.getByRole("button", { name: "Should we ship this?" }).click();
     await page.locator("#assistant .answer .draft strong", { hasText: "Draft: PAUSE" }).waitFor();
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "no horizontal page scroll at 390px");
+    const overflow = await page.evaluate(() => {
+      const w = window.innerWidth;
+      return { scrollWidth: document.documentElement.scrollWidth, innerWidth: w, offenders: [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 12).map((e) => `${e.tagName.toLowerCase()}#${e.id}.${(e as HTMLElement).className} right=${Math.round(e.getBoundingClientRect().right)} width=${Math.round(e.getBoundingClientRect().width)}`) };
+    });
+    assert.ok(overflow.scrollWidth <= overflow.innerWidth + 1, `horizontal page scroll at 390px in ${NAME}: ${JSON.stringify(overflow)}`);
     assert.deepEqual(problems, [], "no console errors or CSP violations");
     assert.ok(sim.plan.id > 0);
   });
 
-  it("demo_cookie__secure_cookie_over_loopback_http__keeps_the_same_identity_across_requests", async () => {
+  it("demo_cookie__over_loopback_http__keeps_the_same_identity_across_requests", async () => {
     const page = await (await browser.newContext()).newPage();
     const first = await page.goto(demoBase);
     const setCookie = (await first!.allHeaders())["set-cookie"] ?? "";
     assert.match(setCookie, /vs_uid=/);
-    assert.match(setCookie, /Secure/);
     assert.match(setCookie, /HttpOnly/);
+    assert.doesNotMatch(setCookie, /Secure/, "loopback over plain HTTP deliberately omits Secure: WebKit drops Secure cookies there");
     // A second request from the same browser must carry the cookie back, so the identity (and its variant) is stable.
     const second = await page.reload();
-    assert.equal((await second!.allHeaders())["set-cookie"], undefined, `${NAME} did not send the Secure cookie back over http://127.0.0.1, so the demo issued a new identity`);
+    assert.equal((await second!.allHeaders())["set-cookie"], undefined, `${NAME} did not send the cookie back over http://127.0.0.1, so the demo issued a new identity`);
     const variant = (await page.content()).match(/data-variant="(\w+)"/)?.[1];
     await page.reload();
     assert.equal((await page.content()).match(/data-variant="(\w+)"/)?.[1], variant, "the variant must stay the same for one browser");

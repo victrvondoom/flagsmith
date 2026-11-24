@@ -30,6 +30,15 @@ const same = (a: string | undefined, b: string): boolean => a !== undefined && t
 
 export interface DemoApp { server: Server; faults: FaultController }
 
+const LOOPBACK = /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/;
+
+/** True when cookies must carry `Secure`: the request is HTTPS, or it does not come from this machine. */
+export function isSecureContext(req: Pick<IncomingMessage, "headers" | "socket">): boolean {
+  const proto = req.headers["x-forwarded-proto"];
+  if (typeof proto === "string" && proto.split(",")[0]!.trim() === "https") return true;
+  return !LOOPBACK.test(req.socket.remoteAddress ?? "");
+}
+
 export function createDemoApp(opts: { flagsmith: FlagsmithClient | null; telemetry: Telemetry; cfg: DemoConfig; onError?: (e: unknown) => void }): DemoApp {
   const { cfg, telemetry, flagsmith } = opts;
   const rand = cfg.random ?? Math.random;
@@ -58,13 +67,21 @@ export function createDemoApp(opts: { flagsmith: FlagsmithClient | null; telemet
     }
   }
 
+  /**
+   * Cookie attributes. `Secure` is set whenever the connection is HTTPS (directly signalled by a trusted proxy) or the client is
+   * not on this machine. The one exception is a client on loopback over plain HTTP, i.e. someone running the demo locally:
+   * Chromium and Firefox keep a Secure cookie there, WebKit/Safari does not, and a dropped cookie makes the demo hand every
+   * request a new identity and therefore a new variant. A remote client never gets a cookie without `Secure`.
+   */
+  const cookieAttrs = (req: IncomingMessage): string => `Path=/; HttpOnly; SameSite=Lax${isSecureContext(req) ? "; Secure" : ""}`;
+
   function identify(req: IncomingMessage, res: ServerResponse): string {
     const header = req.headers["x-demo-uid"];
     if (cfg.allowUidHeader && typeof header === "string" && UID_RE.test(header)) return header;
     const cookie = /(?:^|;\s*)vs_uid=([\w-]{3,64})/.exec(req.headers.cookie ?? "")?.[1];
     if (cookie) return cookie;
     const uid = randomUUID().replace(/-/g, "");
-    res.setHeader("set-cookie", `vs_uid=${uid}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+    res.setHeader("set-cookie", `vs_uid=${uid}; ${cookieAttrs(req)}; Max-Age=86400`);
     return uid;
   }
 
@@ -146,7 +163,7 @@ export function createDemoApp(opts: { flagsmith: FlagsmithClient | null; telemet
       if (req.method === "GET" && url.pathname === "/") {
         const uid = identify(req, res);
         const override = cfg.allowOverride ? url.searchParams.get("variant") : null;
-        if (override && /^[\w-]{1,64}$/.test(override)) res.setHeader("set-cookie", [`vs_override=${override}; Path=/; HttpOnly; Secure; SameSite=Lax`, ...[res.getHeader("set-cookie") ?? []].flat().map(String)]);
+        if (override && /^[\w-]{1,64}$/.test(override)) res.setHeader("set-cookie", [`vs_override=${override}; ${cookieAttrs(req)}`, ...[res.getHeader("set-cookie") ?? []].flat().map(String)]);
         const { a, banner } = await assign(uid, override);
         const variant = a.variantKey ?? "control";
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
