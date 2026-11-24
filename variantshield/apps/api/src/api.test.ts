@@ -130,10 +130,14 @@ describe("api: telemetry ingest", () => {
     assert.equal(r.status, 400);
   });
 
-  it("ingest__event_rate_limit__eventually_returns_429", async () => {
-    let limited = 0;
-    for (let i = 0; i < 260 && !limited; i++) if ((await call("POST", "/api/ingest", { events: [evt({ eventId: `rl-${i}` })] }, { "x-ingest-key": INGEST })).status === 429) limited++;
-    assert.equal(limited, 1);
+  it("ingest__event_rate_limit__a_burst_beyond_the_bucket_gets_429", async () => {
+    // Given a bucket of 200 requests refilling at 100/s. Sending the burst concurrently makes it independent of machine speed:
+    // a sequential loop can fall behind the refill on a loaded machine and never hit the limit.
+    const burst = await Promise.all(Array.from({ length: 400 }, (_, i) => call("POST", "/api/ingest", { events: [evt({ eventId: `rl-${i}` })] }, { "x-ingest-key": INGEST })));
+    const limited = burst.filter((r) => r.status === 429);
+    assert.ok(limited.length >= 1, "expected the burst to be throttled");
+    assert.ok(burst.some((r) => r.status === 200), "expected the start of the burst to be accepted");
+    assert.ok(limited.every((r) => r.headers.has("retry-after")), "429 responses carry Retry-After");
   });
 });
 
