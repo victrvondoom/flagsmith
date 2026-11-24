@@ -14,6 +14,8 @@ import { ingest } from "../../../packages/telemetry/src/index.ts";
 import { RateLimiter } from "../../../packages/telemetry/src/index.ts";
 import { FlagsmithError } from "../../../packages/flagsmith-adapter/src/index.ts";
 import { contractRoutes } from "./contract-routes.ts";
+import { ledgerRoutes } from "./ledger-routes.ts";
+import { record } from "./ledger.ts";
 import { verifySurfaceKey, type SurfaceBinding } from "./surface-keys.ts";
 import * as metrics from "./metrics.ts";
 
@@ -23,6 +25,8 @@ export interface Route {
   method: string; pattern: RegExp; auth: Auth; handler: (h: HandlerArgs) => Promise<unknown> | unknown; raw?: boolean;
   /** Not available to the read-only viewer credential (e.g. anything that reveals keys). */
   adminOnly?: boolean;
+  /** A POST that only reads: allowed for the read-only viewer credential. */
+  readOnly?: boolean;
   /** CPU-heavy read; rate limited separately because evaluation runs on the single request thread. */
   heavy?: boolean;
 }
@@ -129,12 +133,14 @@ const routes: Route[] = [
           health: await flagsmithHealth(ctx),
         },
         secrets: { adminToken: true, ingestKey: true, identitySecret: true, identityIssuerKey: true, identityTokenSecret: true, viewerToken: ctx.cfg.viewerToken !== null, ephemeral: ctx.cfg.ephemeralSecrets },
+        ledger: { entries: Number((ctx.db.get("SELECT COUNT(*) AS n FROM ledger_entries") as { n: number } | undefined)?.n ?? 0), signedWithRotatableKey: true, allowSelfApproval: ctx.cfg.allowSelfApproval },
         limits: { maxObservationsPerContract: ctx.cfg.maxObservationsPerContract, historyRetentionDays: ctx.cfg.historyRetentionDays, trustProxy: ctx.cfg.trustProxy },
         retentionDays: ctx.cfg.retentionDays,
         corsOrigins: ctx.cfg.corsOrigins,
         contracts: { registered: Number((ctx.db.get("SELECT COUNT(DISTINCT id) AS n FROM contracts") as { n: number } | undefined)?.n ?? 0) },
         endpoints: {
           ingest: { path: "/api/ingest", auth: "X-Ingest-Key" },
+          ledger: { path: "/api/ledger, /api/context/:type/:id, /api/assistant/ask", auth: "Authorization: Bearer (viewer may read and ask; admin may record)" },
           contractObservations: { path: "/api/contract-observations", auth: "X-Surface-Key (per surface)" },
           metrics: { path: "/metrics", auth: "Authorization: Bearer (admin or viewer)" },
           identityIssue: { path: "/api/identity/issue", auth: "X-Identity-Issuer-Key" },
@@ -207,6 +213,7 @@ const routes: Route[] = [
       const src: SourceFilter = plan.isSimulation ? "simulation" : "real";
       const snapshot = { capturedAt: ctx.now(), source: src, simulated: plan.isSimulation, plan: { id: plan.id, key: plan.key, title: plan.title }, ...(await verdictFor(ctx, plan, src)), bench: benchRunSnapshot(ctx) };
       const id = ctx.db.run("INSERT INTO evidence (plan_id, kind, created_at, created_by, payload) VALUES (?,?,?,?,?)", plan.id, "verdict_snapshot", ctx.now(), actor, JSON.stringify(snapshot)).lastInsertRowid;
+      record(ctx, { kind: "evidence.snapshot", subjectType: "plan", subjectId: String(plan.id), actor, source: src, summary: `Evidence snapshot #${id}: ${snapshot.verdict.outcome.replaceAll("_", " ")}. ${snapshot.verdict.headline}`, payload: { evidenceId: id, outcome: snapshot.verdict.outcome, recommendedAction: snapshot.verdict.recommendedAction, reliability: snapshot.verdict.reliabilityVerdict.status } });
       return { id, snapshot };
     },
   },
@@ -265,7 +272,7 @@ const routes: Route[] = [
   { method: "POST", pattern: /^\/api\/simulate\/([\w-]+)$/, auth: "admin", handler: ({ ctx, params }) => { if (!ctx.cfg.demoMode) throw new HttpError(403, "demo_disabled", "Simulation is disabled (VARIANTSHIELD_DEMO_MODE=false)"); return runScenario(ctx, params[0]!); } },
 ];
 
-routes.push(...contractRoutes);
+routes.push(...contractRoutes, ...ledgerRoutes);
 
 function benchRunSnapshot(ctx: Ctx): unknown {
   const run = ctx.db.get("SELECT id, status, fault FROM bench_runs WHERE status IN ('passed','failed') ORDER BY started_at DESC LIMIT 1");
@@ -352,7 +359,7 @@ export function createApp(ctx: Ctx): App {
         const given = bearer(req);
         if (tokenMatches(given, ctx.cfg.adminToken)) { /* full access */ }
         else if (ctx.cfg.viewerToken !== null && tokenMatches(given, ctx.cfg.viewerToken)) {
-          if (req.method !== "GET" || route.adminOnly) throw new HttpError(403, "forbidden", "The read-only credential cannot do this");
+          if ((req.method !== "GET" && !route.readOnly) || route.adminOnly) throw new HttpError(403, "forbidden", "The read-only credential cannot do this");
         } else reject("Missing or invalid admin token");
         throttle(adminLimiter, `admin:${ip}`);
         if (route.heavy) throttle(heavyLimiter, `heavy:${ip}`);

@@ -63,13 +63,19 @@ Details and diagrams: [`docs/architecture/OVERVIEW.md`](docs/architecture/OVERVI
 
 Declare how one experiment must behave across web, mobile, payment and risk services in a versioned YAML/JSON contract, propagate a pseudonymous signed identity, and let VariantShield flag assignment mismatches, environment mismatches, unlinked identities, version skew, invalid feature combinations and missing or stale surfaces. It reuses Flagsmith's own assignment; it never buckets users. Guide: [`docs/guides/CONTRACTS.md`](docs/guides/CONTRACTS.md). API: [`docs/API.md`](docs/API.md). Example: [`examples/checkout-journey.contract.yaml`](examples/checkout-journey.contract.yaml). Dashboard: `#/contracts`. VariantShield is an independent open-source project, not an official Flagsmith product.
 
+## Decision memory, assistant and MCP
+
+The **Decision Ledger** (`#/ledger`) remembers what was known and who decided what, per experiment plan or contract. It is append-only, hash-chained and signed. A decision is **official** only after a different person approves it, and approving after the facts changed needs an explicit acknowledgement. A **rule-based assistant** (no model, nothing leaves your server) answers from those records with citations and drafts decisions for a person to record. An **MCP server** gives coding assistants the same read access, read-only by default. Guides: [`docs/guides/LEDGER.md`](docs/guides/LEDGER.md), [`docs/guides/MCP.md`](docs/guides/MCP.md). A draft upstream discussion (not posted) is in [`docs/upstream/`](docs/upstream/).
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 249 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `npm test` | 295 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
 | `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
+| `npm run mcp` | MCP server on stdio (set `VARIANTSHIELD_MCP_TOKEN`) |
+| `npm run vs -- ledger verify` | verify the decision ledger (`--file export.json --expect-head <hash>` for an offline check) |
 | `npm run surfaces` | four sample surfaces (web, mobile simulator, payment API, risk engine) on :8801-8804 |
 | `npm run demo:contracts` | live contract demo: healthy, bad combination, stale variant |
 | `npm run serve` | API + dashboard |
@@ -80,14 +86,14 @@ Declare how one experiment must behave across web, mobile, payment and risk serv
 
 ## Configuration
 
-Copy [`.env.example`](.env.example). Required in production (24+ random characters each; weak values are refused): `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`, `VARIANTSHIELD_IDENTITY_SECRET`, `VARIANTSHIELD_IDENTITY_ISSUER_KEY`. Optional: `VARIANTSHIELD_VIEWER_TOKEN`, `VARIANTSHIELD_IDENTITY_TOKEN_SECRET`, `VARIANTSHIELD_TRUST_PROXY`, `VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT`, `VARIANTSHIELD_HISTORY_RETENTION_DAYS`. Surfaces use per-surface keys (`variantshield contract surface-keys`). For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
+Copy [`.env.example`](.env.example). Required in production (24+ random characters each; weak values are refused): `VARIANTSHIELD_ADMIN_TOKEN`, `VARIANTSHIELD_INGEST_KEY`, `VARIANTSHIELD_IDENTITY_SECRET`, `VARIANTSHIELD_IDENTITY_ISSUER_KEY`. Optional: `VARIANTSHIELD_VIEWER_TOKEN`, `VARIANTSHIELD_LEDGER_KEY`, `VARIANTSHIELD_ALLOW_SELF_APPROVAL`, `VARIANTSHIELD_IDENTITY_TOKEN_SECRET`, `VARIANTSHIELD_TRUST_PROXY`, `VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT`, `VARIANTSHIELD_HISTORY_RETENTION_DAYS`. Surfaces use per-surface keys (`variantshield contract surface-keys`). For Flagsmith: `FLAGSMITH_URL`, `FLAGSMITH_ENVIRONMENT_KEY`, and `FLAGSMITH_ADMIN_API_KEY` or `FLAGSMITH_ADMIN_TOKEN` (server-side only). Others: `PORT`, `HOST`, `VARIANTSHIELD_DB_PATH`, `CORS_ORIGINS`, `RETENTION_DAYS`, `VARIANTSHIELD_DEMO_MODE`, `GUARDRAIL_CONFIG_JSON`.
 
 ## Verification status (what was actually run)
 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 249 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, CLI 12, surfaces 8, contract UI journey 1 (includes the Integration page) |
+| 295 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, ledger API 33, MCP 11, ledger UI journey 1, CLI 13, surfaces 8, contract UI journey 1 (includes the Integration page) |
 | Contract demo (`scripts/contract-demo.ts`) | passes all three phases in production mode with strong secrets and per-surface keys, over real HTTP between the API and the four surfaces, **against the bundled fake Flagsmith**. Against a real Flagsmith it passed before the per-surface-key change and has not been re-run since |
 | Assignment-config drift on real Flagsmith | **not run live**; covered by tests against a fake Flagsmith only |
 | Environment mismatch live | only simulation and tests (one real Flagsmith environment available) |

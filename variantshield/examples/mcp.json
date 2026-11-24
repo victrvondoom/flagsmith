@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "variantshield": {
+      "command": "node",
+      "args": ["variantshield/apps/mcp/src/main.ts"],
+      "env": {
+        "VARIANTSHIELD_URL": "http://127.0.0.1:8787",
+        "VARIANTSHIELD_MCP_TOKEN": "<viewer token>"
+      }
+    }
+  }
+}

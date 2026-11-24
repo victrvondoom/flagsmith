@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { verifyChain, type LedgerEntry } from "../../api/src/ledger.ts";
 import { parseArgs } from "node:util";
 import { environmentFingerprint, parseContract, parseManifestText, type Contract, type ContractIssue } from "../../../packages/contracts/src/index.ts";
 
@@ -10,6 +11,9 @@ import { environmentFingerprint, parseContract, parseManifestText, type Contract
  *   contract check    --contract id [--version N] [--json]   re-verify with Flagsmith, persist findings, set the exit code
  *   contract report   --contract id [--version N] [--json]   read-only report
  *   contract surface-keys --contract id [--json]          per-surface reporting keys (secrets: give each surface only its own)
+ *   ledger verify                                          verify the server's decision ledger (hash chain and signatures)
+ *   ledger verify --file export.json [--expect-head HASH]  verify an exported ledger offline (hash chain only; signatures need the server key)
+ *   ledger export [--out file.json]                       download the full ledger
  *   env-fingerprint <flagsmith client key>                   value for experiment.environment_fingerprint
  *
  * Exit codes: 0 ok · 1 invalid contract or contract violation · 2 usage / connection / auth error · 3 incomplete or no data (use --allow-incomplete to treat as ok)
@@ -21,6 +25,8 @@ const USAGE = `Usage:
   variantshield contract check    --contract <id> [--version <n>] [--allow-incomplete] [--json]
   variantshield contract report   --contract <id> [--version <n>] [--json]
   variantshield contract surface-keys --contract <id> [--version <n>] [--json]   (prints secrets)
+  variantshield ledger verify [--file <export.json> [--expect-head <hash>]] [--json]
+  variantshield ledger export [--out <file.json>]
   variantshield env-fingerprint <flagsmith client-side environment key>
 
 Environment: VARIANTSHIELD_URL, VARIANTSHIELD_ADMIN_TOKEN
@@ -80,6 +86,37 @@ function describeReport(r: any): string {
   return lines.join("\n");
 }
 
+async function ledgerCommand(sub: string | undefined, rest: string[]): Promise<void> {
+  if (sub !== "verify" && sub !== "export") return fail(2, USAGE);
+  let v: Record<string, string | boolean | undefined>;
+  try { v = parseArgs({ args: rest, options: { file: { type: "string" }, "expect-head": { type: "string" }, out: { type: "string" }, json: { type: "boolean", default: false } } }).values; }
+  catch (e) { return fail(2, `${(e as Error).message}\n\n${USAGE}`); }
+  const o: Out = { json: v.json === true };
+  if (sub === "export") {
+    const r = await api("GET", "/api/ledger/export", undefined, o);
+    if (r.status !== 200) return fail(1, `${r.json?.error?.code ?? r.status}: ${r.json?.error?.message ?? "export failed"}`, o);
+    const body = JSON.stringify(r.json, null, 2);
+    if (typeof v.out === "string") { writeFileSync(v.out, body); print(o, `Wrote ${r.json.entries.length} entries to ${v.out}. Head ${r.json.head}. Store the head somewhere else; it is the only way to detect removal of the newest entries.`, { entries: r.json.entries.length, head: r.json.head, out: v.out }); }
+    else console.log(body);
+    return;
+  }
+  if (typeof v.file === "string") {
+    let data: { entries?: LedgerEntry[] };
+    try { data = JSON.parse(readFileSync(v.file, "utf8")) as { entries?: LedgerEntry[] }; } catch (e) { return fail(2, `Cannot read ${v.file}: ${(e as Error).message}`, o); }
+    if (!Array.isArray(data.entries)) return fail(2, "The file has no entries array (use an unfiltered `ledger export`).", o);
+    const r = verifyChain(data.entries, null);
+    const headOk = typeof v["expect-head"] !== "string" || r.head === v["expect-head"];
+    const ok = r.ok && headOk;
+    print(o, ok ? `OK ${r.entries} entries, hash chain intact, head ${r.head ?? "(empty)"}. Signatures were not checked (they need the server's key).` : `FAILED ${r.ok ? `head ${r.head} does not match the expected head (entries after it may have been removed, or new ones added)` : `entry ${r.firstBadSeq}: ${r.reason}`}`, { ...r, ok, headMatches: headOk });
+    process.exit(ok ? 0 : 1);
+  }
+  const r = await api("GET", "/api/ledger/verify", undefined, o);
+  if (r.status !== 200) return fail(1, `${r.json?.error?.code ?? r.status}: ${r.json?.error?.message ?? "verification failed"}`, o);
+  const ok = r.json.ok === true && (typeof v["expect-head"] !== "string" || r.json.head === v["expect-head"]);
+  print(o, ok ? `OK ${r.json.entries} entries, hash chain and signatures verified, head ${r.json.head ?? "(empty)"}` : `FAILED ${r.json.ok ? "head does not match --expect-head" : `entry ${r.json.firstBadSeq}: ${r.json.reason}`}`, r.json);
+  process.exit(ok ? 0 : 1);
+}
+
 const exitForStatus = (status: string, allowIncomplete: boolean): number => (status === "CONTRACT_VALID" ? 0 : status === "CONTRACT_VIOLATION" ? 1 : allowIncomplete ? 0 : 3);
 
 async function main(argv: string[]): Promise<void> {
@@ -90,6 +127,7 @@ async function main(argv: string[]): Promise<void> {
     console.log(environmentFingerprint(key));
     return;
   }
+  if (group === "ledger") return ledgerCommand(sub, rest);
   if (group !== "contract" || !sub || !["validate", "register", "check", "report", "surface-keys"].includes(sub)) return fail(2, USAGE);
   let values: Record<string, string | boolean | undefined>;
   try {

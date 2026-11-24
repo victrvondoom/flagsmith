@@ -171,6 +171,27 @@ const MIGRATIONS: string[] = [
      config TEXT NOT NULL
    );
    CREATE INDEX csnap_contract ON assignment_config_snapshots (contract_id, taken_at);`,
+  // 3: decision ledger. Append-only, hash-chained and HMAC-signed; triggers refuse UPDATE and DELETE.
+  `CREATE TABLE ledger_entries (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     entry_id TEXT NOT NULL UNIQUE,
+     ts INTEGER NOT NULL,
+     kind TEXT NOT NULL,
+     subject_type TEXT NOT NULL,
+     subject_id TEXT NOT NULL,
+     actor TEXT NOT NULL,
+     summary TEXT NOT NULL,
+     payload TEXT NOT NULL,
+     ref_seq INTEGER,
+     source TEXT NOT NULL,
+     prev_hash TEXT NOT NULL,
+     hash TEXT NOT NULL UNIQUE,
+     signature TEXT NOT NULL
+   );
+   CREATE INDEX ledger_subject ON ledger_entries (subject_type, subject_id, seq);
+   CREATE INDEX ledger_kind ON ledger_entries (kind, seq);
+   CREATE TRIGGER ledger_no_update BEFORE UPDATE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+   CREATE TRIGGER ledger_no_delete BEFORE DELETE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;`,
 ];
 export type Row = Record<string, unknown>;
 
@@ -198,8 +219,13 @@ export class Db implements EventStore {
     });
   }
 
+  private txDepth = 0;
+
+  /** Runs `fn` in one transaction. Re-entrant: a nested call joins the outer transaction. */
   tx<T>(fn: () => T): T {
+    if (this.txDepth > 0) return fn();
     this.raw.exec("BEGIN IMMEDIATE");
+    this.txDepth = 1;
     try {
       const out = fn();
       this.raw.exec("COMMIT");
@@ -207,6 +233,8 @@ export class Db implements EventStore {
     } catch (e) {
       this.raw.exec("ROLLBACK");
       throw e;
+    } finally {
+      this.txDepth = 0;
     }
   }
 

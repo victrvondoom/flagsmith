@@ -54,3 +54,18 @@ Follow-up found by re-checking my own work:
 Verification: `npm run check` passes; CI on the head commit: `check`, `docker` and CodeQL `analyze` succeeded.
 
 Not done (needs design work or a real environment): moving off SQLite, a durable ingest queue, per-user SSO and audit identity, alerting/webhooks, an observation SDK, anonymous to authenticated linking, pinning GitHub Actions and the base image by digest (digests cannot be verified offline), and bringing the compose stack up end to end.
+
+## Decision memory, rule-based assistant, MCP, upstream draft
+Requested as one use-case tool with a genuine workflow. Built:
+
+* **Ledger** (`apps/api/src/ledger.ts`, migration 3): append-only (triggers), hash-chained, HMAC-signed; automatic capture from plan approval, evidence, executed control actions, contract registration and status change; propose, approve and reject with a second-actor rule, typed confirmation, reason and stale-context acknowledgement. 33 API tests including tamper detection (edited entry, removed entry, forged signature) and key rotation.
+* **Context brief** (`briefing.ts`): one deterministic digest per plan or contract, with a fingerprint of the facts a decision depends on and a diff against the last official decision. A plan includes the contracts that check the same flag.
+* **Assistant** (`assistant.ts`): rule-based, cited, drafts only. Defaults to hold when the ledger fails verification or a contract is violated.
+* **MCP server** (`apps/mcp`): stdio JSON-RPC, six tools, read-only by default, output marked as data and sanitised; 11 tests including a real stdio session.
+* **Dashboard** (`#/ledger`), **CLI** (`ledger verify|export`, offline verification with `--expect-head`), docs, and an unposted upstream discussion draft.
+
+What "official" means: approved by a second named actor in this ledger. It is not an official Flagsmith product, and the upstream draft says so.
+
+Limits: the actor is a caller-supplied name; newest-entry truncation needs an externally stored head; the assistant is pattern-based and answers only the listed intents; MCP prompt-injection risk is reduced, not removed. Not tested with a real MCP client (the tests speak the protocol directly); not tested in Firefox or WebKit.
+
+Verification: `npm run check` passes, 295 tests, 0 failures.

@@ -1,6 +1,7 @@
 import type { Ctx } from "./context.ts";
 import { HttpError } from "./http.ts";
 import { getPlan, type Plan } from "./plans.ts";
+import { record } from "./ledger.ts";
 import { FlagsmithError, type FlagsmithExperimentStatus } from "../../../packages/flagsmith-adapter/src/index.ts";
 
 export type ControlAction = "pause" | "resume" | "complete";
@@ -39,6 +40,13 @@ export function expectedConfirmation(action: ControlAction, experimentId: number
 }
 
 function audit(ctx: Ctx, req: ControlRequest, plan: Plan, fields: { outcome: string; before?: string | null; after?: string | null; simulated?: boolean; detail?: unknown }): number {
+  const id = writeAudit(ctx, req, plan, fields);
+  // Only a control action that actually changed state is part of the decision record; dry runs and refusals stay in the audit table.
+  if (fields.outcome === "executed") record(ctx, { kind: "control.executed", subjectType: "plan", subjectId: String(plan.id), actor: req.actor, source: fields.simulated ? "simulation" : "real", summary: `${req.action.toUpperCase()}: Flagsmith experiment ${plan.flagsmithExperimentId ?? plan.key} went ${fields.before} -> ${fields.after}. Reason: ${req.reason ?? ""}`, payload: { action: req.action, before: fields.before ?? null, after: fields.after ?? null, reason: req.reason ?? null, evidenceId: req.evidenceId ?? null, auditId: id } });
+  return id;
+}
+
+function writeAudit(ctx: Ctx, req: ControlRequest, plan: Plan, fields: { outcome: string; before?: string | null; after?: string | null; simulated?: boolean; detail?: unknown }): number {
   return ctx.db.run(
     `INSERT INTO audit (ts, actor, action, plan_id, flagsmith_experiment_id, dry_run, simulated, outcome, reason, evidence_id, before_state, after_state, detail)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,

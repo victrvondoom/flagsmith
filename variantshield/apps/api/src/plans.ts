@@ -3,6 +3,7 @@ import { HttpError } from "./http.ts";
 import { mergeConfig, type DeepPartial, type GuardrailConfig } from "../../../packages/guardrail-engine/src/index.ts";
 import type { ExperimentResultSummary } from "../../../packages/verdict/src/index.ts";
 import type { Row } from "./db.ts";
+import { record } from "./ledger.ts";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
@@ -142,7 +143,9 @@ export function setApproval(ctx: Ctx, id: number, decision: ApprovalStatus, acto
   getPlan(ctx, id);
   if (decision !== "approved" && decision !== "rejected" && decision !== "pending") throw new HttpError(400, "validation_failed", "decision must be approved, rejected or pending");
   ctx.db.run("UPDATE plans SET approval_status=?, approval_by=?, approval_at=?, approval_note=?, updated_at=? WHERE id=?", decision, decision === "pending" ? null : actor, decision === "pending" ? null : ctx.now(), note.slice(0, 1000), ctx.now(), id);
-  return getPlan(ctx, id);
+  const plan = getPlan(ctx, id);
+  record(ctx, { kind: "plan.approval", subjectType: "plan", subjectId: String(id), actor, source: plan.isSimulation ? "simulation" : "real", summary: `Plan approval set to ${decision}${note ? `: ${note.slice(0, 200)}` : ""}`, payload: { decision, note: note.slice(0, 1000) } });
+  return plan;
 }
 
 export function guardrailConfigFor(ctx: Ctx, plan: Plan): GuardrailConfig {

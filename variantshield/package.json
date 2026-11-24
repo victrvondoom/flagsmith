@@ -19,7 +19,8 @@
     "demo:checkout": "node apps/checkout-demo/src/main.ts",
     "simulate": "node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/simulate.ts",
     "bench": "node apps/variant-bench/src/run.ts --out bench-output",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "mcp": "node apps/mcp/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

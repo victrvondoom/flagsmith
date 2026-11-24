@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Ctx } from "./context.ts";
+import { record } from "./ledger.ts";
 import { HttpError } from "./http.ts";
 import type { Row } from "./db.ts";
 import {
@@ -74,6 +75,7 @@ export function registerContract(ctx: Ctx, input: unknown, actor: string, opts: 
   const drift = prev ? diffContracts(prev.contract, contract) : [];
   const source = opts.simulation ? "simulation" : "real";
   for (const d of drift) insertDrift(ctx, contract.id, prev!.contract.version, contract.version, d, source);
+  if (!opts.simulation) record(ctx, { kind: "contract.registered", subjectType: "contract", subjectId: contract.id, actor, summary: `Registered contract ${contract.id} v${contract.version}: ${contract.surfaces.length} surfaces, ${Object.keys(contract.variants).length} variants, ${drift.length} change(s) vs the previous version`, payload: { version: contract.version, hash, surfaces: contract.surfaces.map((x) => x.id), driftCount: drift.length, drift: drift.slice(0, 20).map((d) => ({ attribute: d.attribute, severity: d.severity })) } });
   return { stored: getContractVersion(ctx, contract.id, contract.version), status: "created", drift, warnings: v.issues };
 }
 
@@ -383,6 +385,16 @@ export async function checkContract(ctx: Ctx, contractId: string, version?: numb
   let newFindings = 0, updated = 0;
   ctx.db.tx(() => { for (const f of built.report.findings) { if (f.severity === "info") continue; if (persistFinding(ctx, f, source)) newFindings++; else updated++; } });
   invalidateReports(ctx, contractId);
+  if (!stored.isSimulation) {
+    // One ledger entry per change of status, not one per check, so a polling CI job does not bury the record.
+    const lastChecked = ctx.db.get("SELECT payload FROM ledger_entries WHERE kind = 'contract.checked' AND subject_type = 'contract' AND subject_id = ? ORDER BY seq DESC LIMIT 1", contractId);
+    let lastStatus: unknown = null;
+    try { lastStatus = lastChecked ? (JSON.parse(String(lastChecked.payload)) as { status?: unknown }).status : null; } catch { lastStatus = null; }
+    if (lastStatus !== built.report.status) {
+      const errs = built.report.findings.filter((f) => f.severity === "error").length, warns = built.report.findings.filter((f) => f.severity === "warning").length;
+      record(ctx, { kind: "contract.checked", subjectType: "contract", subjectId: contractId, actor: "check", summary: `Contract ${contractId} v${built.report.version} is ${built.report.status.replaceAll("_", " ")}${built.report.primaryCode ? ` (${built.report.primaryCode})` : ""}: ${errs} error(s), ${warns} warning(s)`, payload: { status: built.report.status, primaryCode: built.report.primaryCode, version: built.report.version, errors: errs, warnings: warns, flagsmithVerified: flagsmith.verified, configFingerprint: flagsmith.configFingerprint } });
+    }
+  }
   return { ...built, persisted: { newFindings, updated, newDrift }, flagsmith, drift: listDrift(ctx, contractId, 100), historicalFindings: Number(ctx.db.get("SELECT COUNT(*) AS n FROM contract_findings WHERE contract_id = ?", contractId)?.n ?? 0) };
 }
 const this_env = (ctx: Ctx): string => ctx.cfg.flagsmith.environmentKey?.slice(0, 6) ?? "none";

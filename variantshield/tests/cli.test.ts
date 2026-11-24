@@ -127,4 +127,32 @@ describe("variantshield CLI", () => {
     assert.equal(JSON.parse(r.stdout).report.primaryCode, "ASSIGNMENT_MISMATCH");
     assert.equal(app.ctx.db.get("SELECT COUNT(*) AS n FROM contract_findings")?.n, before);
   });
+
+  it("ledger__verify_online_export_and_offline_verification_detect_tampering_and_head_mismatch", async () => {
+    // Given a ledger with entries (a simulated plan and two notes)
+    const H = { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" };
+    const sim = await (await fetch(`${url}/api/simulate/safe-winner`, { method: "POST", headers: H })).json() as { plan: { id: number } };
+    for (const t of ["first note", "second note", "third note"]) await fetch(`${url}/api/ledger/notes`, { method: "POST", headers: H, body: JSON.stringify({ scope: { type: "plan", id: String(sim.plan.id) }, text: t }) });
+    // When verified online and exported
+    const online = await run(["ledger", "verify", "--json"]);
+    assert.equal(online.code, 0);
+    assert.equal(JSON.parse(online.stdout).signaturesChecked, true);
+    const out = join(dir, "ledger.json");
+    assert.equal((await run(["ledger", "export", "--out", out])).code, 0);
+    const exported = JSON.parse(readFileSync(out, "utf8"));
+    // Then it verifies offline, and the head can be pinned
+    assert.equal((await run(["ledger", "verify", "--file", out])).code, 0);
+    assert.equal((await run(["ledger", "verify", "--file", out, "--expect-head", exported.head])).code, 0);
+    const wrongHead = await run(["ledger", "verify", "--file", out, "--expect-head", "0".repeat(64)]);
+    assert.equal(wrongHead.code, 1);
+    assert.match(wrongHead.stdout, /does not match the expected head/);
+    // An edited entry and a removed entry are both caught offline
+    const edited = structuredClone(exported); edited.entries[1].summary = "edited"; writeFileSync(join(dir, "edited.json"), JSON.stringify(edited));
+    const e = await run(["ledger", "verify", "--file", join(dir, "edited.json")]);
+    assert.equal(e.code, 1); assert.match(e.stdout, /does not match its hash/);
+    const removed = structuredClone(exported); removed.entries.splice(1, 1); writeFileSync(join(dir, "removed.json"), JSON.stringify(removed));
+    const r = await run(["ledger", "verify", "--file", join(dir, "removed.json"), "--json"]);
+    assert.equal(r.code, 1); assert.equal(JSON.parse(r.stdout).ok, false);
+    assert.equal((await run(["ledger", "verify", "--file", join(dir, "nope.json")])).code, 2);
+  });
 });

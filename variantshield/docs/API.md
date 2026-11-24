@@ -47,6 +47,18 @@ JSON everywhere. Errors: `{ "error": { "code", "message", "detail?" } }`. Auth s
 ```
 `observedAt` may be at most 60 s ahead of the server clock. `observationId` is unique per contract and surface. `experimentKey`, `assignmentFlag`, the contract version and the surface must match a registered contract version, or the record is rejected. Unknown fields (including anything resembling personal data) are rejected. A missing or invalid token is accepted but stored `unlinked`. The same `observationId` with identical content is a `duplicate`; with different content it is rejected as an idempotency conflict. Real surfaces cannot write to simulation contracts.
 
+## Decision ledger, context and assistant
+| Method and path | Auth | Purpose |
+|---|---|---|
+| `GET /api/ledger?subjectType=&subjectId=&kind=&limit=&before=` | admin or viewer | Entries, newest first |
+| `GET /api/ledger/verify` | admin or viewer (heavy) | `{ ok, entries, head, firstBadSeq, reason, signaturesChecked }` |
+| `GET /api/ledger/export?subjectType=&subjectId=` | admin or viewer (heavy) | `{ exportedAt, head, entries }`. Unfiltered exports verify offline |
+| `POST /api/ledger/notes` | admin | `{ scope: { type, id }, text }` |
+| `POST /api/ledger/decisions` | admin | `{ scope, decision: ship\|hold\|pause\|rollback\|extend, rationale }`. Records a proposal with a snapshot of the current facts |
+| `POST /api/ledger/decisions/:seq/resolve` | admin | `{ action: approve\|reject, confirmation: "APPROVE <seq>", reason, acknowledgeChanges? }`. `403 self_approval_forbidden`, `409 context_changed` (with `detail.changes`), `409 already_resolved`, `400 confirmation_required` |
+| `GET /api/context/plan/:id`, `/api/context/contract/:id` | admin or viewer (heavy) | The context brief |
+| `POST /api/assistant/ask` | admin or viewer (heavy) | `{ scope, question (<= 400 chars) }` -> `{ answer: { intent, lines, citations, suggestions, draft }, brief }`. Read-only |
+
 ## Operations
 | Method and path | Auth | Purpose |
 |---|---|---|

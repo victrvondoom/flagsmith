@@ -23,6 +23,10 @@ export interface AppConfig {
   maxObservationsPerContract: number;
   /** Retention for findings, drift and configuration snapshots (observations use retentionDays). */
   historyRetentionDays: number;
+  /** Signs ledger entries (HMAC). First key signs; the rest are accepted for verification after a rotation. */
+  ledgerKeys: string[];
+  /** Let the person who proposed a decision also approve it. Off by default: an official decision needs a second named actor. */
+  allowSelfApproval: boolean;
   ephemeralSecrets: boolean;
   corsOrigins: string[];
   retentionDays: number;
@@ -79,6 +83,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     identityTokenSecret: tokenSecretEnv || createHmac("sha256", identitySecret).update("vs-token-key:v1").digest("base64url"),
     identityTokenPrevious: (env.VARIANTSHIELD_IDENTITY_TOKEN_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
     viewerToken: viewerEnv ? viewerEnv : null,
+    ledgerKeys: [env.VARIANTSHIELD_LEDGER_KEY || createHmac("sha256", identitySecret).update("vs-ledger-key:v1").digest("base64url"), ...(env.VARIANTSHIELD_LEDGER_KEY_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean)],
+    allowSelfApproval: env.VARIANTSHIELD_ALLOW_SELF_APPROVAL === "true",
     trustProxy: env.VARIANTSHIELD_TRUST_PROXY === "true",
     maxObservationsPerContract: intEnv("VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT", 500_000, 1000),
     historyRetentionDays: intEnv("VARIANTSHIELD_HISTORY_RETENTION_DAYS", 365, 1),

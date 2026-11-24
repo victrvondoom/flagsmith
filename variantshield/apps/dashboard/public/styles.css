@@ -88,3 +88,21 @@ td ul { margin: 0; padding-left: 16px; }
 .swatch.s0 { background: var(--s0); } .swatch.s1 { background: var(--s1); } .swatch.s2 { background: var(--s2); } .swatch.s3 { background: var(--s3); }
 .chart .th { fill: none; stroke-width: 1; stroke-dasharray: 4 3; } .chart .th.warn { stroke: var(--warn); } .chart .th.breach { stroke: var(--bad); } .chart .th-label { font-size: 9px; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
+
+/* Decision Ledger */
+.split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.split > .sticky { position: sticky; top: 12px; }
+@media (max-width: 900px) { .split { grid-template-columns: minmax(0, 1fr); } .split > .sticky { position: static; } }
+.row.wrap { flex-wrap: wrap; }
+.answers { display: grid; gap: 10px; margin-top: 10px; max-height: 60vh; overflow: auto; }
+.answer { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.answer .q { font-weight: 600; margin-bottom: 6px; }
+.answer .a p { margin: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer .cites { margin-top: 6px; }
+.answer .draft { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.chipbtn { font-size: 12px; padding: 3px 8px; }
+#question { flex: 1; min-width: 0; }
+.grid > *, .split > * { min-width: 0; }
+.topbar .ctl { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.ctl select { max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+#integrity { flex-wrap: wrap; }
