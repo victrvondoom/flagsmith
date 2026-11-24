@@ -50,7 +50,17 @@ describe(`cross-browser smoke (${NAME})`, () => {
     await page.locator("#assistant .answer .draft strong", { hasText: "Draft: PAUSE" }).waitFor();
     const overflow = await page.evaluate(() => {
       const w = window.innerWidth;
-      return { scrollWidth: document.documentElement.scrollWidth, innerWidth: w, offenders: [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 12).map((e) => `${e.tagName.toLowerCase()}#${e.id}.${(e as HTMLElement).className} right=${Math.round(e.getBoundingClientRect().right)} width=${Math.round(e.getBoundingClientRect().width)}`) };
+      const all = [...document.querySelectorAll("body *")] as HTMLElement[];
+      const name = (e: HTMLElement): string => `${e.tagName.toLowerCase()}#${e.id}.${e.className}`;
+      return {
+        scrollWidth: document.documentElement.scrollWidth, innerWidth: w, bodyScrollWidth: document.body.scrollWidth, bodyWidth: Math.round(document.body.getBoundingClientRect().width),
+        // Boxes that extend past the viewport.
+        offenders: all.filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 10).map((e) => `${name(e)} right=${Math.round(e.getBoundingClientRect().right)}`),
+        // Content that spills out of its own box (long unbroken text, nowrap): invisible to getBoundingClientRect.
+        spilling: all.filter((e) => e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX === "visible" && e.clientWidth > 0).slice(0, 12).map((e) => `${name(e)} scroll=${e.scrollWidth} client=${e.clientWidth} ws=${getComputedStyle(e).whiteSpace} text="${(e.textContent ?? "").trim().slice(0, 40)}"`),
+        // The widest elements, whatever the reason.
+        widest: all.map((e) => ({ n: name(e), r: Math.round(e.getBoundingClientRect().right) })).sort((a, b) => b.r - a.r).slice(0, 5).map((x) => `${x.n} right=${x.r}`),
+      };
     });
     assert.ok(overflow.scrollWidth <= overflow.innerWidth + 1, `horizontal page scroll at 390px in ${NAME}: ${JSON.stringify(overflow)}`);
     assert.deepEqual(problems, [], "no console errors or CSP violations");
