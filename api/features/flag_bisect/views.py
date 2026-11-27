@@ -2,7 +2,7 @@ import typing
 
 from django.conf import settings
 from django.db.models import QuerySet
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.decorators import action
@@ -32,6 +32,20 @@ from features.flag_bisect.serializers import (
 )
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=["mcp"],
+        operation_id="list_flag_bisect_incidents",
+        description="Lists Flag Bisect incidents for an environment, newest first, with their state, "
+        "rounds and conclusion.",
+    ),
+    retrieve=extend_schema(
+        tags=["mcp"],
+        operation_id="get_flag_bisect_incident",
+        description="Retrieves a Flag Bisect incident: suspected flag changes and their odds, canary "
+        "probes and verdicts, and the swarm's trail. Approvals stay with people.",
+    ),
+)
 class IncidentViewSet(
     viewsets.GenericViewSet[Incident],
     mixins.ListModelMixin,
