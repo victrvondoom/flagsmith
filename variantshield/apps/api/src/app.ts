@@ -18,6 +18,9 @@ import { ledgerRoutes } from "./ledger-routes.ts";
 import { record } from "./ledger.ts";
 import { verifySurfaceKey, type SurfaceBinding } from "./surface-keys.ts";
 import * as metrics from "./metrics.ts";
+import { bisectRoutes } from "./bisect/routes.ts";
+import { BisectRuntime } from "./bisect/runtime.ts";
+import { FlagsmithControl } from "./bisect/flagsmith-control.ts";
 
 /** `ingest` accepts the master ingest key or a per-surface key; `surface` accepts only a per-surface key bound to one (contract, surface). */
 export type Auth = "public" | "admin" | "ingest" | "surface" | "issuer";
@@ -272,7 +275,7 @@ const routes: Route[] = [
   { method: "POST", pattern: /^\/api\/simulate\/([\w-]+)$/, auth: "admin", handler: ({ ctx, params }) => { if (!ctx.cfg.demoMode) throw new HttpError(403, "demo_disabled", "Simulation is disabled (VARIANTSHIELD_DEMO_MODE=false)"); return runScenario(ctx, params[0]!); } },
 ];
 
-routes.push(...contractRoutes, ...ledgerRoutes);
+routes.push(...contractRoutes, ...ledgerRoutes, ...bisectRoutes);
 
 function benchRunSnapshot(ctx: Ctx): unknown {
   const run = ctx.db.get("SELECT id, status, fault FROM bench_runs WHERE status IN ('passed','failed') ORDER BY started_at DESC LIMIT 1");
@@ -301,6 +304,7 @@ const clientIp = (req: IncomingMessage, trustProxy: boolean): string => {
 };
 
 export function createApp(ctx: Ctx): App {
+  ctx.bisect ??= new BisectRuntime(ctx, ctx.flagsmith ? new FlagsmithControl(ctx.flagsmith, ctx.db) : null);
   const ingestLimiter = new RateLimiter({ capacity: 200, refillPerSecond: 100 });
   const adminLimiter = new RateLimiter({ capacity: 120, refillPerSecond: 30 });
   const controlLimiter = new RateLimiter({ capacity: 10, refillPerSecond: 0.2 });

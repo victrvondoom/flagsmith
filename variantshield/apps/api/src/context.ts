@@ -1,6 +1,7 @@
 import type { AppConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { FlagsmithClient } from "../../../packages/flagsmith-adapter/src/index.ts";
+import type { BisectRuntime } from "./bisect/runtime.ts";
 
 export interface Ctx {
   cfg: AppConfig;
@@ -9,6 +10,8 @@ export interface Ctx {
   now: () => number;
   /** Flagsmith adapter, or null when FLAGSMITH_URL / keys are not configured. Never a stand-in. */
   flagsmith: FlagsmithClient | null;
+  /** Incident swarm; created by createApp when absent. */
+  bisect?: BisectRuntime;
 }
 
 export function buildFlagsmith(cfg: AppConfig, fetchImpl?: typeof fetch): FlagsmithClient | null {

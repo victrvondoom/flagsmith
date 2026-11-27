@@ -1,13 +1,14 @@
 import { loadConfig } from "./config.ts";
 import { Db } from "./db.ts";
 import { createApp } from "./app.ts";
-import { buildFlagsmith } from "./context.ts";
+import { buildFlagsmith, type Ctx } from "./context.ts";
 import { clearReportCache } from "./contracts.ts";
 
 const cfg = loadConfig();
 const db = new Db(cfg.dbPath);
-const ctx = { cfg, db, now: () => Date.now(), flagsmith: buildFlagsmith(cfg) };
+const ctx: Ctx = { cfg, db, now: () => Date.now(), flagsmith: buildFlagsmith(cfg) };
 const { server } = createApp(ctx);
+ctx.bisect?.start(250);
 
 const purge = (): void => {
   const removed = db.purgeEventsOlderThan(Date.now() - cfg.retentionDays * 86_400_000);
@@ -33,5 +34,5 @@ server.listen(cfg.port, cfg.host, () => {
 });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => server.close(() => { db.close(); process.exit(0); }));
+  process.on(sig, () => { ctx.bisect?.stop(); server.closeAllConnections(); server.close(() => { db.close(); process.exit(0); }); });
 }

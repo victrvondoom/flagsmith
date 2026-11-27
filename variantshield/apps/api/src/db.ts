@@ -192,6 +192,61 @@ const MIGRATIONS: string[] = [
    CREATE INDEX ledger_kind ON ledger_entries (kind, seq);
    CREATE TRIGGER ledger_no_update BEFORE UPDATE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
    CREATE TRIGGER ledger_no_delete BEFORE DELETE ON ledger_entries BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;`,
+  // 4: incident bisection (Toggle Wars build, 2026-11-26). Signals from apps, incidents, the swarm's blackboard and probes.
+  `CREATE TABLE bisect_signals (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     ts INTEGER NOT NULL,
+     identity TEXT NOT NULL,
+     ok INTEGER NOT NULL,
+     flags TEXT NOT NULL,
+     source TEXT NOT NULL CHECK (source IN ('real','simulation'))
+   );
+   CREATE INDEX bsig_source_ts ON bisect_signals (source, ts);
+   CREATE TABLE incidents (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     source TEXT NOT NULL CHECK (source IN ('real','simulation')),
+     state TEXT NOT NULL,
+     opened_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     onset_at INTEGER,
+     baseline_rate REAL,
+     data TEXT NOT NULL
+   );
+   CREATE TABLE swarm_messages (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     incident_id INTEGER NOT NULL REFERENCES incidents(id),
+     ts INTEGER NOT NULL,
+     agent TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     text TEXT NOT NULL,
+     data TEXT NOT NULL
+   );
+   CREATE INDEX smsg_incident ON swarm_messages (incident_id, id);
+   CREATE TABLE probes (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     incident_id INTEGER NOT NULL REFERENCES incidents(id),
+     round INTEGER NOT NULL,
+     revert TEXT NOT NULL,
+     started_at INTEGER NOT NULL,
+     ended_at INTEGER,
+     verdict TEXT,
+     judgement TEXT,
+     beliefs_before TEXT NOT NULL,
+     beliefs_after TEXT
+   );
+   CREATE INDEX probes_incident ON probes (incident_id, round);
+   CREATE TABLE flag_changes (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     received_at INTEGER NOT NULL,
+     changed_at INTEGER NOT NULL,
+     feature TEXT NOT NULL,
+     feature_id INTEGER,
+     before TEXT NOT NULL,
+     after TEXT NOT NULL,
+     changed_by TEXT NOT NULL,
+     source TEXT NOT NULL
+   );
+   CREATE INDEX fchg_changed ON flag_changes (changed_at);`,
 ];
 export type Row = Record<string, unknown>;
 

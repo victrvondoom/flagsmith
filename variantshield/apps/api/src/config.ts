@@ -27,6 +27,8 @@ export interface AppConfig {
   ledgerKeys: string[];
   /** Let the person who proposed a decision also approve it. Off by default: an official decision needs a second named actor. */
   allowSelfApproval: boolean;
+  /** Secret configured on the Flagsmith webhook; incoming FLAG_UPDATED calls must carry a valid X-Flagsmith-Signature. */
+  flagsmithWebhookSecret: string | null;
   ephemeralSecrets: boolean;
   corsOrigins: string[];
   retentionDays: number;
@@ -85,6 +87,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     viewerToken: viewerEnv ? viewerEnv : null,
     ledgerKeys: [env.VARIANTSHIELD_LEDGER_KEY || createHmac("sha256", identitySecret).update("vs-ledger-key:v1").digest("base64url"), ...(env.VARIANTSHIELD_LEDGER_KEY_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean)],
     allowSelfApproval: env.VARIANTSHIELD_ALLOW_SELF_APPROVAL === "true",
+    flagsmithWebhookSecret: env.VARIANTSHIELD_FLAGSMITH_WEBHOOK_SECRET || null,
     trustProxy: env.VARIANTSHIELD_TRUST_PROXY === "true",
     maxObservationsPerContract: intEnv("VARIANTSHIELD_MAX_OBSERVATIONS_PER_CONTRACT", 500_000, 1000),
     historyRetentionDays: intEnv("VARIANTSHIELD_HISTORY_RETENTION_DAYS", 365, 1),

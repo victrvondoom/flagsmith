@@ -15,6 +15,20 @@ export class HttpError extends Error {
 
 export const MAX_BODY_BYTES = 1_048_576;
 
+/** Reads the body as raw bytes (for signature checks), with the same size limit as readJson. */
+export async function readRaw(req: IncomingMessage): Promise<Buffer> {
+  const declared = Number(req.headers["content-length"] ?? 0);
+  if (declared > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "Request body is too large");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "Request body is too large");
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function readJson(req: IncomingMessage): Promise<unknown> {
   const declared = Number(req.headers["content-length"] ?? 0);
   if (declared > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "Request body is too large");

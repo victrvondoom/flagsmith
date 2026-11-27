@@ -22,8 +22,10 @@ export const GENESIS = "0".repeat(64);
 
 export type LedgerKind =
   | "plan.approval" | "evidence.snapshot" | "control.executed" | "contract.registered" | "contract.checked"
-  | "decision.proposed" | "decision.approved" | "decision.rejected" | "note";
-export type SubjectType = "plan" | "contract" | "system";
+  | "decision.proposed" | "decision.approved" | "decision.rejected" | "note"
+  | "incident.opened" | "bisect.envelope.approved" | "bisect.probe" | "bisect.concluded" | "bisect.aborted"
+  | "remediation.proposed" | "remediation.approved" | "remediation.executed" | "incident.resolved";
+export type SubjectType = "plan" | "contract" | "system" | "incident";
 export const DECISIONS = ["ship", "hold", "pause", "rollback", "extend"] as const;
 export type Decision = (typeof DECISIONS)[number];
 

@@ -33,10 +33,20 @@ export interface FakeFlagsmith {
   setWeight(experimentId: number, variant: string, percentage: number): void;
   /** Make the next pause call report success while leaving the experiment running (to test verification). */
   ignoreNextTransition(): void;
+  /** Plain flags (environment default plus segment overrides), for incident bisection tests. */
+  flags: Map<string, FakeFlag>;
+  segments: Map<number, { name: string; percent: number }>;
+  audit: { id: number; created_date: string; log: string; related_object_type: string; related_object_id: number; author: { email: string } | null; change_details: { field: string; old: unknown; new: unknown }[] }[];
+  /** Changes a flag's environment default as an operator would, writing an audit entry with before/after. */
+  changeFlag(name: string, next: { enabled: boolean; value: string | number | boolean | null }, author?: string, atMs?: number): void;
+  /** Feature names served to an identity (evaluating canary segment overrides). */
+  flagsFor(identifier: string): Record<string, { enabled: boolean; value: string | number | boolean | null }>;
   close(): Promise<void>;
 }
 
-export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[]; pageSize?: number } = {}): Promise<FakeFlagsmith> {
+export interface FakeFlag { id: number; enabled: boolean; value: string | number | boolean | null; overrides: Map<number, { enabled: boolean; value: string | number | boolean | null; priority: number }> }
+
+export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[]; pageSize?: number; flags?: Record<string, { enabled: boolean; value: string | number | boolean | null }> } = {}): Promise<FakeFlagsmith> {
   const environmentKey = "ENVKEY_test_0123456789";
   const adminKey = "test-admin-key";
   const experiments = new Map<number, FakeExperiment>((opts.experiments ?? []).map((e) => [e.id, structuredClone(e)]));
@@ -48,6 +58,25 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
     ignoreNextTransition: () => { state.ignoreTransition = true; },
     setWeight: (id, variant, percentage) => { const e = experiments.get(id); if (e) e.weights[variant] = percentage / 100; },
     close: () => new Promise((r) => server.close(() => r())),
+    flags: new Map(Object.entries(opts.flags ?? {}).map(([name, f], i) => [name, { id: 500 + i, enabled: f.enabled, value: f.value, overrides: new Map() }])),
+    segments: new Map(),
+    audit: [],
+    changeFlag: (name, next, author = "ops@example.com", atMs = Date.now()) => {
+      const f = self.flags.get(name);
+      if (!f) throw new Error(`no fake flag ${name}`);
+      // Same messages and split as Flagsmith (audit/constants.py): one entry for enabled, one for the value.
+      if (f.enabled !== next.enabled) self.audit.unshift({ id: self.audit.length + 1, created_date: new Date(atMs).toISOString(), log: `Flag state updated for feature: ${name}`, related_object_type: "FEATURE_STATE", related_object_id: f.id + 1000, author: { email: author }, change_details: [{ field: "enabled", old: f.enabled, new: next.enabled }] });
+      if (String(f.value) !== String(next.value)) self.audit.unshift({ id: self.audit.length + 1, created_date: new Date(atMs).toISOString(), log: `Remote config value updated for feature: ${name}`, related_object_type: "FEATURE_STATE", related_object_id: f.id + 1000, author: { email: author }, change_details: [{ field: "string_value", old: f.value, new: next.value }] });
+      f.enabled = next.enabled; f.value = next.value;
+    },
+    flagsFor: (identifier) => {
+      const out: Record<string, { enabled: boolean; value: string | number | boolean | null }> = {};
+      for (const [name, f] of self.flags) {
+        const hit = [...f.overrides.entries()].filter(([seg]) => { const sg = self.segments.get(seg); return sg !== undefined && bucket(identifier, `seg-${seg}`) * 100 < sg.percent; }).sort((a, b) => a[1].priority - b[1].priority)[0];
+        out[name] = hit ? { enabled: hit[1].enabled, value: hit[1].value } : { enabled: f.enabled, value: f.value };
+      }
+      return out;
+    },
   };
 
   const bucket = (identifier: string, feature: string): number => {
@@ -95,7 +124,8 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
       const identifier = u.searchParams.get("identifier") ?? "";
       const flags = [...experiments.values()].filter((e) => e.status === "running").map((e) => ({ feature: { name: e.featureName }, enabled: true, feature_state_value: assign(e, identifier) }));
       const paused = [...experiments.values()].filter((e) => e.status !== "running").map((e) => ({ feature: { name: e.featureName }, enabled: true, feature_state_value: "control" }));
-      return send(200, { identifier, flags: [...flags, ...paused.filter((p) => !flags.some((f) => f.feature.name === p.feature.name))] });
+      const plain = Object.entries(self.flagsFor(identifier)).map(([name, v]) => ({ feature: { name }, enabled: v.enabled, feature_state_value: v.value }));
+      return send(200, { identifier, flags: [...flags, ...paused.filter((p) => !flags.some((f) => f.feature.name === p.feature.name)), ...plain] });
     }
     // Management endpoints used by getAssignmentConfig (shapes taken from a real Flagsmith response).
     if (path === `/api/v1/environments/${environmentKey}/` && req.method === "GET") {
@@ -104,13 +134,87 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
     }
     if (path === "/api/v1/features/featurestates/" && req.method === "GET") {
       if (!admin) return send(req.headers.authorization ? 403 : 401, { detail: "Authentication credentials were not provided." });
-      const e = [...experiments.values()].find((x) => x.featureName === u.searchParams.get("feature_name"));
+      const e = [...experiments.values()].find((x) => String(100 + x.id) === u.searchParams.get("feature"));
       if (!e) return send(200, { count: 0, next: null, previous: null, results: [] });
       const opts = e.variants.filter((v) => v !== "control");
       const mv = (pct: (v: string) => number): unknown[] => opts.map((v, i) => ({ id: i + 1, multivariate_feature_option: i + 1, percentage_allocation: pct(v) }));
       const states: Record<string, unknown>[] = [{ id: 1, enabled: true, feature: 100 + e.id, feature_segment: null, feature_state_value: { type: "unicode", string_value: "control" }, multivariate_feature_state_values: mv(() => 0) }];
       if (e.status !== "created") states.push({ id: 2, enabled: true, feature: 100 + e.id, feature_segment: 1, feature_state_value: { type: "unicode", string_value: "control" }, multivariate_feature_state_values: mv((v) => Math.round((e.weights[v] ?? 0) * 1000) / 10) });
       return send(200, { count: states.length, next: null, previous: null, results: states });
+    }
+    // Environment default feature states (accepts feature_name, like Flagsmith's /environments/{key}/featurestates/).
+    if (path === `/api/v1/environments/${environmentKey}/featurestates/` && req.method === "GET") {
+      if (!admin) return send(req.headers.authorization ? 403 : 401, { detail: "Authentication credentials were not provided." });
+      const name = u.searchParams.get("feature_name");
+      const e = [...experiments.values()].find((x) => x.featureName === name);
+      const f = name ? self.flags.get(name) : undefined;
+      const results = e ? [{ id: 1, feature: 100 + e.id, enabled: true }] : f ? [{ id: f.id + 1000, feature: f.id, enabled: f.enabled }] : [];
+      return send(200, { count: results.length, next: null, previous: null, results });
+    }
+    if (path === "/api/v1/projects/1/features/" && req.method === "GET") {
+      if (!admin) return send(401, { detail: "Authentication credentials were not provided." });
+      const q = u.searchParams.get("search") ?? "";
+      const all = [...[...experiments.values()].map((e) => ({ id: 100 + e.id, name: e.featureName })), ...[...self.flags.entries()].map(([name, f]) => ({ id: f.id, name }))].filter((x) => x.name.includes(q));
+      return send(200, { count: all.length, next: null, previous: null, results: all });
+    }
+    const ff = path.match(/^\/api\/__future__\/environments\/([^/]+)\/features\/(\d+)\/(?:segment-overrides\/(\d+)\/)?$/);
+    if (ff) {
+      if (!admin) return send(401, { detail: "Authentication credentials were not provided." });
+      if (ff[1] !== environmentKey) return send(404, { detail: "Not found." });
+      const entry = [...self.flags.entries()].find(([, f]) => f.id === Number(ff[2]));
+      if (!entry) return send(404, { detail: "Not found." });
+      const [name, f] = entry;
+      const typed = (v: string | number | boolean | null): unknown => (v === null ? null : { type: typeof v === "boolean" ? "boolean" : typeof v === "number" ? "integer" : "string", value: String(v) });
+      const untyped = (v: { type?: string; value?: string } | null | undefined): string | number | boolean | null => (v == null ? null : v.type === "boolean" ? v.value === "true" : v.type === "integer" ? Number(v.value) : String(v.value));
+      const view2 = (): unknown => ({ environment_default: { enabled: f.enabled, value: typed(f.value), variants: [] }, segment_overrides: [...f.overrides.entries()].map(([seg, o]) => ({ segment: { id: seg }, priority: o.priority, enabled: o.enabled, value: typed(o.value), variants: [] })) });
+      if (ff[3]) {
+        if (req.method !== "DELETE") return send(405, { detail: "Method not allowed" });
+        if (!f.overrides.delete(Number(ff[3]))) return send(404, { detail: "Not found." });
+        return send(200, view2());
+      }
+      if (req.method === "GET") return send(200, view2());
+      if (req.method === "PATCH") {
+        const b = (await readBody(req)) as { environment_default?: { enabled?: boolean; value?: { type?: string; value?: string } | null }; segment_overrides?: { segment: { id: number }; priority?: number; enabled?: boolean; value?: { type?: string; value?: string } | null }[] };
+        if (b.environment_default) {
+          const next = { enabled: b.environment_default.enabled ?? f.enabled, value: b.environment_default.value === undefined ? f.value : untyped(b.environment_default.value) };
+          self.changeFlag(name, next, "variantshield-api-key");
+        }
+        for (const o of b.segment_overrides ?? []) {
+          if (!self.segments.has(o.segment.id)) return send(400, { segment_overrides: [{ segment: { id: ["Segment not found."] } }] });
+          const prev = f.overrides.get(o.segment.id);
+          f.overrides.set(o.segment.id, { enabled: o.enabled ?? prev?.enabled ?? f.enabled, value: o.value === undefined ? (prev?.value ?? f.value) : untyped(o.value), priority: o.priority ?? prev?.priority ?? 0 });
+        }
+        return send(200, view2());
+      }
+      return send(405, { detail: "Method not allowed" });
+    }
+    if (path === "/api/v1/projects/1/segments/" && req.method === "POST") {
+      if (!admin) return send(401, { detail: "Authentication credentials were not provided." });
+      const b = (await readBody(req)) as { name?: string; rules?: { rules?: { conditions?: { operator?: string; value?: string }[] }[] }[] };
+      const cond = b.rules?.[0]?.rules?.[0]?.conditions?.[0];
+      if (cond?.operator !== "PERCENTAGE_SPLIT") return send(400, { rules: ["fake supports PERCENTAGE_SPLIT only"] });
+      const id = 900 + self.segments.size;
+      self.segments.set(id, { name: String(b.name), percent: Number(cond.value) });
+      return send(201, { id, name: b.name, project: 1 });
+    }
+    const sm = path.match(/^\/api\/v1\/projects\/1\/segments\/(\d+)\/$/);
+    if (sm && req.method === "DELETE") {
+      if (!admin) return send(401, { detail: "Authentication credentials were not provided." });
+      const id = Number(sm[1]);
+      if (!self.segments.delete(id)) return send(404, { detail: "Not found." });
+      for (const f of self.flags.values()) f.overrides.delete(id);
+      return res.writeHead(204).end();
+    }
+    if (path === "/api/v1/projects/1/audit/" && req.method === "GET") {
+      if (!admin) return send(401, { detail: "Authentication credentials were not provided." });
+      const results = self.audit.map(({ change_details: _c, ...rest }) => rest);
+      return send(200, { count: results.length, next: null, previous: null, results });
+    }
+    const am = path.match(/^\/api\/v1\/projects\/1\/audit\/(\d+)\/$/);
+    if (am && req.method === "GET") {
+      const a = self.audit.find((x) => x.id === Number(am[1]));
+      if (!a) return send(404, { detail: "Not found." });
+      return send(200, { ...a, change_type: a.change_details.length ? "UPDATE" : "UNKNOWN" });
     }
     const pm = path.match(/^\/api\/v1\/projects\/1\/features\/(\d+)\/$/);
     if (pm && req.method === "GET") {
