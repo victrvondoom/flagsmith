@@ -13,6 +13,11 @@ x-flag-bisect-image: &flag-bisect-image
   build:
     context: .
     target: oss-unified
+    args:
+      # Override with environment variables if a registry is rate-limited,
+      # e.g. NODE_IMAGE=docker.io/library/node
+      NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node}
+      WOLFI_BASE_IMAGE: ${WOLFI_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}
 
 services:
   migrate-db:

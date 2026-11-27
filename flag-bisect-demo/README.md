@@ -71,6 +71,15 @@ This is Flagsmith's own `docker-compose.yml` (Postgres, API, task processor, Exp
 the image built from this repository and `FLAG_BISECT_ENABLED=true`. Open <http://localhost:8000>, create your account,
 an organisation and a project.
 
+If Docker Hub or Amazon's public registry refuses the base images (for example `429 Too Many Requests`), point the build
+at another copy of the same images:
+
+```bash
+NODE_IMAGE=docker.io/library/node docker compose -f docker-compose.yml -f flag-bisect-demo/docker-compose.yml up --build
+```
+
+`NODE_IMAGE` and `WOLFI_BASE_IMAGE` are build arguments of the repository's `Dockerfile`; their defaults are unchanged.
+
 ### Break checkout on purpose
 
 1. In **Account → Keys**, create an API token, and copy the environment's client-side key from **SDK Keys**.

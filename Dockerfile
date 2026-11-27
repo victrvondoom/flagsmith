@@ -55,8 +55,13 @@ ARG CI_COMMIT_SHA=dev
 ARG NODE_VERSION=24
 ARG PYTHON_VERSION=3.13
 
-FROM public.ecr.aws/docker/library/node:${NODE_VERSION}-bookworm AS node
-FROM cgr.dev/chainguard/wolfi-base:latest AS wolfi-base
+# Base image repositories. Override them to build where a registry is
+# unreachable or rate-limited, e.g. --build-arg NODE_IMAGE=docker.io/library/node
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node
+ARG WOLFI_BASE_IMAGE=cgr.dev/chainguard/wolfi-base
+
+FROM ${NODE_IMAGE}:${NODE_VERSION}-bookworm AS node
+FROM ${WOLFI_BASE_IMAGE}:latest AS wolfi-base
 
 # - Intermediary stages
 # * build-node
