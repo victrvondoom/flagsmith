@@ -69,6 +69,7 @@ export class BisectRuntime {
   private simIncidentScenario: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  private lastWatch = 0;
   private readonly ctx: Ctx;
   readonly real: FlagControl | null;
 
@@ -168,6 +169,11 @@ export class BisectRuntime {
         this.storeSignals("simulation", this.sim.traffic(20_000, 900));
         this.emit({ type: "tick", incidentId: null, source: "simulation", data: { clock: this.sim.clock } });
       }
+      // Flag watcher for real environments (every 5 s): the Archivist's change history when webhooks and the audit API are unavailable.
+      if (this.real?.watch && this.ctx.now() - this.lastWatch >= 5_000) {
+        this.lastWatch = this.ctx.now();
+        try { await this.real.watch(this.ctx.now()); } catch (e) { console.error(JSON.stringify({ msg: "bisect.watch_failed", error: String(e) })); }
+      }
       for (const source of ["simulation", "real"] as const) {
         if (source === "simulation" && !this.sim) continue;
         if (source === "real" && !this.real) continue;
@@ -210,8 +216,9 @@ export class BisectRuntime {
     if (buckets.length < 8 || (source === "simulation" && this.simIncidentScenario === null)) return;
     const o = detectOnset(buckets);
     if (!o.alarmed || o.onsetAt === null) return;
-    if (source === "simulation") this.simIncidentScenario = null; // one incident per simulation run
     const after = buckets.filter((b) => b.start >= o.onsetAt!);
+    if (after.length < 2) return; // confirm on two complete minutes before paging anyone, and measure the rate on them
+    if (source === "simulation") this.simIncidentScenario = null; // one incident per simulation run
     const an = after.reduce((a, b) => a + b.n, 0), af = after.reduce((a, b) => a + b.failures, 0);
     const data: IncidentData = { scenario: this.sim?.scenario.id, suspects: [], priorExplanation: [], beliefs: [], envelope: null, envelopeApproval: null, canary: null, probe: null, rounds: 0, conclusion: null, confirmed: false, remediation: null, regressionRate: an ? af / an : o.currentRate, lastJudgement: null, waitingOn: null };
     const id = this.ctx.db.run("INSERT INTO incidents (source, state, opened_at, updated_at, onset_at, baseline_rate, data) VALUES (?,?,?,?,?,?,?)", source, "INVESTIGATING", now, this.ctx.now(), o.onsetAt, o.baselineRate, JSON.stringify(data)).lastInsertRowid;
@@ -232,13 +239,14 @@ export class BisectRuntime {
         this.say(id, "archivist", "suspects", suspects.length ? `Found ${suspects.length} flag change(s) in the 2 hours before the onset and since: ${suspects.map((s) => s.feature).join(", ")}.` : "No flag changes in the 2 hours before the onset.", { suspects: suspects.map((s) => ({ id: s.id, feature: s.feature, changedAt: s.changedAt, changedBy: s.changedBy })) });
         if (!suspects.length) { this.save(id, d, "NOT_A_FLAG_CHANGE"); this.say(id, "scribe", "state", "INVESTIGATING → NOT_A_FLAG_CHANGE: nothing to bisect"); return; }
         // Profiler
-        const p = priors(suspects, inc.onsetAt!);
+        // The onset is dated to its minute bucket; changes inside that minute can still be the cause, so measure lag to its end.
+        const p = priors(suspects, inc.onsetAt! + BUCKET_MS);
         d.suspects = suspects; d.beliefs = p.beliefs; d.priorExplanation = p.explanation;
         const top = [...p.explanation].sort((a, b) => b.weight - a.weight).slice(0, 3);
         this.say(id, "profiler", "priors", `Prior odds favour ${top.map((t) => `${feat(d, t.id)} (${pctOf(p.beliefs, t.id)})`).join(", ")}; ${p.explanation.filter((e) => e.factors.afterOnset).length} change(s) came after the onset and weigh little. Pairs that only break together carry ${pctOf(p.beliefs, "pairs")} and "none of these" ${pctOf(p.beliefs, "none")}.`, { explanation: p.explanation });
         // Guardian proposes the envelope
         const canaryPercent = inc.source === "simulation" ? 10 : 5;
-        d.envelope = { suspects: suspects.map((s) => s.id), canaryPercent, maxRounds: 10, maxRevert: suspects.length, maxMinutes: inc.source === "simulation" ? 60 : 45 };
+        d.envelope = { suspects: suspects.map((s) => s.id), canaryPercent, maxRounds: 12, maxRevert: suspects.length, maxMinutes: inc.source === "simulation" ? 60 : 45 };
         d.waitingOn = `a person to approve the envelope (type "BISECT ${id}")`;
         this.say(id, "guardian", "envelope", `Proposed envelope: revert any of ${suspects.length} change(s), for ${canaryPercent}% of traffic only, at most ${d.envelope.maxRounds} rounds and ${d.envelope.maxMinutes} minutes. Nothing changes in Flagsmith until a person approves.`, d.envelope);
         this.save(id, d, "AWAITING_APPROVAL");
@@ -474,7 +482,7 @@ export class BisectRuntime {
     const inc = this.load(id);
     const d = inc.data;
     const inv = involvement(d.beliefs);
-    const prior = new Map(priors(d.suspects, inc.onsetAt ?? 0).beliefs.map((b) => [b.key, b.p]));
+    const prior = new Map(priors(d.suspects, (inc.onsetAt ?? 0) + BUCKET_MS).beliefs.map((b) => [b.key, b.p]));
     const now = this.clock(inc.source);
     const from = (inc.onsetAt ?? now) - 14 * BUCKET_MS;
     const series = this.buckets(inc.source, from, now + BUCKET_MS);

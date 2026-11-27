@@ -4,10 +4,12 @@ import { commandCenter, control, observatory, trialBoard, variantBench, verdictR
 import { contractsView } from "./contracts.js";
 import { integrationView } from "./integration.js";
 import { ledgerView } from "./ledger.js";
+import { incidentRoom } from "./bisect.js";
 
 const ROUTES = [
-  ["#/command", "Command Center", commandCenter], ["#/board", "Trial Board", trialBoard], ["#/bench", "Variant Bench", variantBench],
-  ["#/observatory", "Reliability Observatory", observatory], ["#/verdict", "Dual Verdict Room", verdictRoom], ["#/control", "Experiment Control", control], ["#/contracts", "Cross-Surface Contracts", contractsView], ["#/ledger", "Decision Ledger", ledgerView], ["#/integration", "Integration", integrationView],
+  ["#/incidents", "Incident Room", incidentRoom, "Production"],
+  ["#/command", "Command Center", commandCenter, "Experiments"], ["#/board", "Trial Board", trialBoard], ["#/bench", "Variant Bench", variantBench],
+  ["#/observatory", "Reliability Observatory", observatory], ["#/verdict", "Dual Verdict Room", verdictRoom], ["#/control", "Experiment Control", control], ["#/contracts", "Cross-Surface Contracts", contractsView, "Governance"], ["#/ledger", "Decision Ledger", ledgerView], ["#/integration", "Integration", integrationView, "System"],
 ];
 const app = document.getElementById("app");
 
@@ -22,19 +24,33 @@ function login(message) {
       h("p", { class: "muted" }, "The token is kept in this tab's session storage only and sent to this server."))));
 }
 
+let cleanups = [];
+const leave = () => { for (const f of cleanups) { try { f(); } catch { /* ignore */ } } cleanups = []; };
+
+function theme(next) {
+  try { if (next) localStorage.setItem("vs.theme", next); } catch { /* storage unavailable */ }
+  let t = "system";
+  try { t = localStorage.getItem("vs.theme") || "system"; } catch { /* storage unavailable */ }
+  if (t === "system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+  return t;
+}
+theme();
+
 async function render() {
+  leave();
   if (!session.token) return login();
-  const hash = ROUTES.some((r) => r[0] === location.hash) ? location.hash : "#/command";
+  const hash = ROUTES.some((r) => r[0] === location.hash) ? location.hash : "#/incidents";
   const [, title, view] = ROUTES.find((r) => r[0] === hash);
   const nav = h("nav", { class: "side", "aria-label": "Primary" }, h("div", { class: "brand" }, h("img", { src: "/favicon.svg", alt: "" }), "VARIANTSHIELD"),
-    ROUTES.map(([href, label]) => h("a", { href, "aria-current": href === hash ? "page" : null }, label)),
+    ROUTES.flatMap(([href, label, , group]) => [group ? h("div", { class: "navgroup", "aria-hidden": "true" }, group) : null, h("a", { href, "aria-current": href === hash ? "page" : null, class: href === "#/incidents" ? "hot" : null }, label)]),
     h("div", { class: "disclaimer" }, "Independent community project. Not an official Flagsmith product or an endorsed integration.", h("br"), h("br"),
-      h("button", { onclick: () => { session.token = ""; render(); } }, "Sign out")));
+      h("div", { class: "row" }, h("button", { onclick: () => { session.token = ""; render(); } }, "Sign out"),
+        h("button", { class: "ghost", "aria-label": "Switch colour theme", onclick: (e) => { const order = ["system", "dark", "light"]; const n = order[(order.indexOf(theme()) + 1) % 3]; theme(n); e.currentTarget.textContent = `Theme: ${n}`; } }, `Theme: ${theme()}`))));
   const main = h("main", { id: "main" }, h("p", { class: "muted", role: "status" }, `Loading ${title}…`));
   app.replaceChildren(h("div", { class: "shell" }, nav, main));
   document.title = `${title} · VariantShield`;
   try {
-    main.replaceChildren(await view({ navigate: (to) => { if (location.hash === to) render(); else location.hash = to; } }));
+    main.replaceChildren(await view({ navigate: (to) => { if (location.hash === to) render(); else location.hash = to; }, onLeave: (f) => cleanups.push(f) }));
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) { session.token = ""; return login("Your session is no longer valid. Sign in again."); }
     main.replaceChildren(h("div", { class: "banner bad", role: "alert" }, `Could not load ${title}: ${e.message}`), h("button", { onclick: render }, "Retry"));

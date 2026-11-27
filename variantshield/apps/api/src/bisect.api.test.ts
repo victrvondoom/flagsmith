@@ -167,6 +167,24 @@ describe("incident swarm: against a Flagsmith double", () => {
     assert.ok(clock - T0 < 6 * 3_600_000);
   });
 
+  it("watcher__no_webhook_and_empty_audit_log__still_finds_the_change", async () => {
+    // Found live: a self-hosted open-source Flagsmith shows 0 days of audit log and refuses private webhook URLs.
+    await start(true);
+    const f = fake!;
+    await runtime().tick(); // baseline snapshot
+    f.changeFlag("search_reranker", { enabled: true, value: "bm25" }, "ops", clock); // no-op (same value)
+    f.changeFlag("new_tax_engine", { enabled: true, value: null }, "fin-platform", clock);
+    f.audit.length = 0;
+    clock += 6_000;
+    await runtime().tick();
+    const rows = app.ctx.db.all("SELECT feature, before, after, source FROM flag_changes");
+    assert.deepEqual(rows.map((r) => [r.feature, r.source]), [["new_tax_engine", "poll"]]);
+    const suspects = await runtime().real!.recentChanges(clock - 60_000, clock);
+    assert.equal(suspects.length, 1);
+    assert.deepEqual(suspects[0]!.before, { enabled: false, value: null });
+    assert.deepEqual(suspects[0]!.after, { enabled: true, value: null });
+  });
+
   it("signals__invalid_payloads__are_rejected", async () => {
     await start();
     const post = (signals: unknown) => call("POST", "/api/bisect/signals", { signals }, { "x-ingest-key": INGEST });

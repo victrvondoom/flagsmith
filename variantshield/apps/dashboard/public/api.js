@@ -31,3 +31,44 @@ export async function imageUrl(path) {
   if (!res.ok) throw new ApiError(res.status, null);
   return URL.createObjectURL(await res.blob());
 }
+
+/**
+ * Live updates from GET /api/stream. EventSource cannot send the bearer token, so this reads the stream with fetch().
+ * Calls onEvent(name, data) per server-sent event and onState("live" | "reconnecting" | "closed"). Returns a stop function.
+ */
+export function stream(path, onEvent, onState = () => {}) {
+  const ctl = new AbortController();
+  let stopped = false, backoff = 1000;
+  const run = async () => {
+    while (!stopped) {
+      try {
+        const res = await fetch(path, { headers: { authorization: `Bearer ${session.token}` }, signal: ctl.signal });
+        if (!res.ok || !res.body) throw new ApiError(res.status, null);
+        onState("live"); backoff = 1000;
+        const reader = res.body.getReader(), dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const block = buf.slice(0, i); buf = buf.slice(i + 2);
+            let name = "message", data = "";
+            for (const line of block.split("\n")) { if (line.startsWith("event: ")) name = line.slice(7); else if (line.startsWith("data: ")) data += line.slice(6); }
+            if (data) { try { onEvent(name, JSON.parse(data)); } catch { /* ignore a malformed event */ } }
+          }
+        }
+      } catch (e) {
+        if (stopped) break;
+        if (e instanceof ApiError && e.status === 401) { onState("closed"); return; }
+      }
+      if (stopped) break;
+      onState("reconnecting");
+      await new Promise((r) => setTimeout(r, backoff)); backoff = Math.min(backoff * 2, 15000);
+    }
+    onState("closed");
+  };
+  void run();
+  return () => { stopped = true; ctl.abort(); };
+}

@@ -23,6 +23,30 @@ export class FlagsmithControl implements FlagControl {
 
   describe(): Record<string, unknown> { return { mode: "flagsmith", ...this.fs.describe() }; }
 
+  private snapshot: Map<string, FlagValue & { id: number }> | null = null;
+
+  /**
+   * Flag watcher: snapshots every environment default (SDK /api/v1/flags/) and records each difference from the previous
+   * snapshot in `flag_changes`. Works on every Flagsmith plan and network, unlike webhooks (Flagsmith refuses webhook URLs on
+   * private networks) and the audit API (self-hosted open-source organisations default to zero days of audit visibility).
+   * A change is dated at the poll that saw it, so its time is accurate to the poll interval.
+   */
+  async watch(nowMs: number): Promise<number> {
+    const flags = await this.fs.getEnvironmentFlags();
+    const prev = this.snapshot;
+    this.snapshot = new Map(Object.entries(flags).map(([k, v]) => [k, { id: v.id, enabled: v.enabled, value: v.value }]));
+    if (!prev) return 0;
+    let n = 0;
+    for (const [feature, now] of this.snapshot) {
+      const was = prev.get(feature);
+      if (!was || sameValue(was, now)) continue;
+      this.ids.set(feature, now.id);
+      this.db.run("INSERT INTO flag_changes (received_at, changed_at, feature, feature_id, before, after, changed_by, source) VALUES (?,?,?,?,?,?,?,?)", nowMs, nowMs, feature, now.id, JSON.stringify({ enabled: was.enabled, value: was.value }), JSON.stringify({ enabled: now.enabled, value: now.value }), "observed by flag watcher", "poll");
+      n++;
+    }
+    return n;
+  }
+
   private async idOf(feature: string): Promise<number> {
     const known = this.ids.get(feature);
     if (known !== undefined) return known;
@@ -34,7 +58,7 @@ export class FlagsmithControl implements FlagControl {
   async recentChanges(sinceMs: number, untilMs: number): Promise<Suspect[]> {
     type Change = { feature: string; featureId: number | null; at: number; before: FlagValue; after: FlagValue; by: string; via: string };
     const changes: Change[] = this.db.all("SELECT * FROM flag_changes WHERE changed_at >= ? AND changed_at <= ? ORDER BY changed_at", sinceMs, untilMs).map((r) => ({
-      feature: String(r.feature), featureId: r.feature_id === null ? null : Number(r.feature_id), at: Number(r.changed_at), before: JSON.parse(String(r.before)) as FlagValue, after: JSON.parse(String(r.after)) as FlagValue, by: String(r.changed_by), via: "webhook",
+      feature: String(r.feature), featureId: r.feature_id === null ? null : Number(r.feature_id), at: Number(r.changed_at), before: JSON.parse(String(r.before)) as FlagValue, after: JSON.parse(String(r.after)) as FlagValue, by: String(r.changed_by), via: String(r.source),
     }));
     // Audit fallback: environment-default updates carry change_details in v1 versioning.
     try {
@@ -43,7 +67,7 @@ export class FlagsmithControl implements FlagControl {
         const m = e.log.match(/^(Flag state|Remote config value) updated for feature: (.+)$/);
         if (!m) continue;
         const feature = m[2]!;
-        if (changes.some((c) => c.feature === feature && Math.abs(c.at - e.at) < 5_000)) continue; // already known from a webhook
+        if (changes.some((c) => c.feature === feature && Math.abs(c.at - e.at) < 15_000)) continue; // already known from a webhook or the watcher
         const detail = await this.fs.getAuditDetail(e.id);
         for (const c of detail.changes) {
           if (c.field === "enabled") changes.push({ feature, featureId: null, at: e.at, before: { enabled: c.old === true, value: null }, after: { enabled: c.new === true, value: null }, by: e.author, via: "audit:enabled" });
@@ -53,7 +77,7 @@ export class FlagsmithControl implements FlagControl {
     } catch (e) {
       if (!(e instanceof FlagsmithError) || (e.kind !== "forbidden" && e.kind !== "not_found")) throw e;
     }
-    // One suspect per feature: before = state before the first change in the window, after = what is served now.
+    // One suspect per feature: before = the state just before its latest change (what a revert restores), after = what is served now.
     const byFeature = new Map<string, Change[]>();
     for (const c of changes.sort((a, b) => a.at - b.at)) byFeature.set(c.feature, [...(byFeature.get(c.feature) ?? []), c]);
     const out: Suspect[] = [];
@@ -61,8 +85,8 @@ export class FlagsmithControl implements FlagControl {
       const featureId = list.find((c) => c.featureId !== null)?.featureId ?? await this.idOf(feature);
       this.ids.set(feature, featureId);
       const now = (await this.fs.getFlagState(featureId)).environmentDefault;
-      const enabledChange = list.find((c) => c.via !== "audit:value");
-      const valueChange = list.find((c) => c.via !== "audit:enabled");
+      const enabledChange = [...list].reverse().find((c) => c.via !== "audit:value");
+      const valueChange = [...list].reverse().find((c) => c.via !== "audit:enabled");
       const before: FlagValue = { enabled: enabledChange ? enabledChange.before.enabled : now.enabled, value: valueChange ? valueChange.before.value : now.value };
       const after: FlagValue = { enabled: now.enabled, value: now.value };
       if (sameValue(before, after)) continue; // changed and changed back

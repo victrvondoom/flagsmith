@@ -193,6 +193,7 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
       const b = (await readBody(req)) as { name?: string; rules?: { rules?: { conditions?: { operator?: string; value?: string }[] }[] }[] };
       const cond = b.rules?.[0]?.rules?.[0]?.conditions?.[0];
       if (cond?.operator !== "PERCENTAGE_SPLIT") return send(400, { rules: ["fake supports PERCENTAGE_SPLIT only"] });
+      if (!(cond as { property?: string }).property) return send(400, { rules: [{ rules: [{ conditions: [{ property: ["This field may not be blank."] }] }] }] }); // as Flagsmith's serializer
       const id = 900 + self.segments.size;
       self.segments.set(id, { name: String(b.name), percent: Number(cond.value) });
       return send(201, { id, name: b.name, project: 1 });
@@ -222,6 +223,10 @@ export async function startFakeFlagsmith(opts: { experiments?: FakeExperiment[];
       const e = [...experiments.values()].find((x) => 100 + x.id === Number(pm[1]));
       if (!e) return send(404, { detail: "Not found." });
       return send(200, { id: 100 + e.id, name: e.featureName, type: "MULTIVARIATE", multivariate_options: e.variants.filter((v) => v !== "control").map((v, i) => ({ id: i + 1, type: "unicode", string_value: v })) });
+    }
+    if (path === "/api/v1/flags/" && req.method === "GET") {
+      if (!sdk) return send(401, { detail: "Invalid environment key" });
+      return send(200, [...self.flags.entries()].map(([name, f]) => ({ id: f.id + 1000, feature: { id: f.id, name }, enabled: f.enabled, feature_state_value: f.value, environment: 1, identity: null, feature_segment: null })));
     }
     if (path === "/api/v1/events/" && req.method === "POST") {
       if (!sdk) return send(401, { detail: "Invalid environment key" });

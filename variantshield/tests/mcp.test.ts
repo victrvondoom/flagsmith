@@ -80,7 +80,7 @@ describe("mcp: tools with a read-only viewer token", () => {
     const s = session({ VARIANTSHIELD_MCP_TOKEN: VIEWER });
     await init(s);
     const names = (await s.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })).result.tools.map((t: any) => t.name);
-    assert.deepEqual(names.sort(), ["ask", "get_context", "list_ledger", "list_subjects", "verify_ledger"]);
+    assert.deepEqual(names.sort(), ["ask", "get_context", "get_incident", "list_incidents", "list_ledger", "list_subjects", "verify_ledger"]);
     const t = (await s.send({ jsonrpc: "2.0", id: 3, method: "tools/list" })).result.tools;
     assert.ok(t.every((x: any) => x.annotations.readOnlyHint === true));
     await s.close();
@@ -98,6 +98,8 @@ describe("mcp: tools with a read-only viewer token", () => {
     assert.equal(a.answer.draft.decision, "pause");
     assert.equal(payload(await call(s, 5, "verify_ledger", {})).ok, true);
     assert.ok(Array.isArray(payload(await call(s, 6, "list_ledger", { type: "plan", id: String(planId), limit: 5 })).entries));
+    assert.deepEqual(payload(await call(s, 7, "list_incidents", {})).incidents, []);
+    assert.match(payload(await call(s, 8, "get_incident", { id: 1 })).error ?? JSON.stringify(payload(await call(s, 9, "get_incident", { id: 1 }))), /incident_not_found/);
     await s.close();
   });
 

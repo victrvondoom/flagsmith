@@ -53,3 +53,33 @@ Everything below was run on 2026-11-24 in the authoring sandbox. "Real Flagsmith
 * **Docker and compose.** No Docker daemon in the sandbox. CI builds and starts the image (`docker` job); the compose stacks are only validated with `docker compose config`, never brought up.
 * Flagsmith Cloud and ClickHouse or Databricks warehouses.
 * Load beyond the single-process measurements in `IMPLEMENTATION_STATUS.md`.
+
+## Incident Bisect against a real Flagsmith (2026-11-27)
+
+Flagsmith built from this repository's `api/` (Django 5.2, PostgreSQL 16, v1 versioning), environment "Production". VariantShield ran with `NODE_ENV=production` and random 32-byte secrets. Command: `node scripts/storefront.ts --rps 60 --auto --webhook <secret>`. Every live request asked Flagsmith's SDK endpoint (`/api/v1/identities/`) which flags the shopper gets, so the canary overrides were evaluated by Flagsmith itself; the shoppers' failure behaviour is the only synthetic part (hidden culprit `new_tax_engine`, 1% → 9%).
+
+| Step | Result |
+|---|---|
+| Deploy | 6 flags changed through Flagsmith's own API in 8 s |
+| Sentinel | onset at the deploy minute; failure rate 0.93% → 8.63% |
+| Archivist | 6 changes found by the flag watcher (13 recorded diffs, including the reset) |
+| Envelope | approved by alice (ledger #2), 10% canary |
+| Round 1 | revert fast_checkout, new_tax_engine, dark_mode_default → **healed** (canary 2.63% vs main 8.20%, evidence 170) |
+| Round 2 | revert 4 others → not healed (8.34% vs 8.80%) |
+| Round 3 | revert address_autocomplete, promo_banner, new_tax_engine → **healed** (1.32% vs 9.56%) |
+| Round 4 | revert the other 5 → not healed (10.30% vs 8.58%) |
+| Round 5 (confirmation) | revert only new_tax_engine → **healed** (0.65% vs 8.94%, evidence 2.1e13) |
+| Conclusion | culprit `new_tax_engine`, 99.1% |
+| Remediation | proposed by alice, approved by bob; `new_tax_engine` read back as off; the 5 innocent changes stayed live |
+| Recovery | RESOLVED about 2 minutes later; 32,694 live requests in total |
+| Clean-up | 0 `vs-canary-*` segments left in Flagsmith; ledger 12 entries, chain and signatures verify |
+
+Screenshots: `docs/screenshots/live-incident-resolved-{dark,light}.png`.
+
+### Found by running it, and fixed
+
+1. **No change history on a self-hosted open-source Flagsmith.** The first live incident closed as "not a flag change" with six changes just made. Two Flagsmith behaviours combined: webhooks to private addresses are refused (`URLs must not target internal or private network addresses.`), and the audit list was empty because `audit_log_visibility_days` defaults to 0 (`api/organisations/models.py`). Added a flag watcher (SDK `/api/v1/flags/` every 5 s, diffed) and a regression test with no webhook and an empty audit log.
+2. **Canary segment refused (400).** Flagsmith's serializer rejects a blank `property` for `PERCENTAGE_SPLIT`, although the engine treats blank as the identity key. Now `$.identity.key`; on the real instance a 10% split matched 35 of 400 identities. The adapter now includes Flagsmith's 400 body in its error.
+3. **Every change counted as "after the onset".** The onset is dated to its minute bucket, so changes inside that minute got almost no prior. Priors now measure lag to the end of the onset minute.
+4. **A suspect's "before" came from its first change in the window**, so a flag reset and changed again looked unchanged. Now the value just before its latest change (what a revert restores).
+5. Found in simulation before going live: node:sqlite binds JS numbers as REAL, so `ts / ?` never grouped into minutes; the bucket width is now an integer literal.

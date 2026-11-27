@@ -35,7 +35,6 @@ export async function integrationView({ navigate }) {
 
   root.append(h("div", { class: "card" }, h("h2", {}, "Endpoints for your services"), kv(Object.entries(d.endpoints).map(([k, v]) => [k, `${v.path}  (${v.auth})`]))));
   root.append(h("div", { class: "card" }, h("h2", {}, "Runtime"), kv([
-    ["Decision ledger", `${d.ledger.entries} entries; ${d.ledger.allowSelfApproval ? "a proposer may approve their own decision" : "a second named actor must approve"}`],
     ["Decision ledger", `${d.ledger.entries} entries; ${d.ledger.allowSelfApproval ? "a proposer may approve their own decision" : "a second named actor must approve"}`], ["Version", d.version], ["Contracts registered", String(d.contracts.registered)], ["Event retention", `${d.retentionDays} days`],
     ["CORS origins", d.corsOrigins.length ? d.corsOrigins.join(", ") : "none (same origin only)"],
   ])));

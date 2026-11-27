@@ -76,3 +76,16 @@ Everything that could be executed was executed; the dated record is [`docs/RUN_L
 Defects found only by running it, now fixed with regression tests: CLI output truncated at 64 KiB when piped; the assistant treating an empty live window as an all-clear; `live-demo.ts` unable to pick its plan. Observed and not explained: one `WARNING` in a healthy phase right after a previous faulty run.
 
 Cross-browser: CI job `browsers` now runs Firefox and WebKit and passes (see `docs/RUN_LOG.md` for the two WebKit-only defects it found and the fixes). Still not run: the compose stack (no Docker daemon), Flagsmith Cloud, ClickHouse and Databricks.
+
+## Toggle Wars: Incident Bisect (2026-11-26/27, after the 08:00 IST opening)
+
+New, separable work (`packages/bisect`, `apps/api/src/bisect/`, `apps/dashboard/public/bisect.js`, `scripts/storefront.ts`, `scripts/bisect-bench.ts`, the redesigned `styles.css`); everything else in VariantShield predates the opening.
+
+* Engine: CUSUM onset, evidence priors, Bayesian group testing over single changes, pairs and "none", two-sample mSPRT per probe, sample-ratio check, seeded simulator.
+* Swarm: seven deterministic agents on a shared blackboard; envelope gate; confirmation probe; two-person remediation; all in the ledger.
+* Flagsmith: flag watcher, signed webhook and audit log for changes; `PERCENTAGE_SPLIT` canary segment; segment overrides through `/api/__future__/`; remediation with read-back. Adapter fix: `getAssignmentConfig` filtered feature states by a parameter Flagsmith ignores.
+* Dashboard: Incident Room with live streaming (authenticated `fetch` stream), design system rewrite (dark and light, theme switch, grouped navigation, mobile nav), Integration page duplicate row fixed.
+* MCP: read-only `list_incidents`, `get_incident`.
+* Method: parallel specialists for Flagsmith API capabilities, prior art and a dashboard audit; shared state in `.agent/`.
+
+Verification: see `README.md` and `docs/RUN_LOG.md`. The DIBS project the user mentioned never reached this session (no upload, no repository), so nothing from it is included.

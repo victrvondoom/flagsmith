@@ -6,12 +6,23 @@ VariantShield adds variant-level **reliability guardrails** to self-hosted [Flag
 
 > **Independent community project.** Not an official Flagsmith product and not endorsed by Flagsmith. It uses only Flagsmith's public REST and SDK endpoints and copies none of its code. Licensed BSD-3-Clause.
 
+## New: Incident Bisect (Toggle Wars build)
+
+**Seven flags changed in 40 minutes and checkout errors jumped from 1% to 9%. Which flag?** VariantShield's incident swarm answers it without rolling everything back: a small Flagsmith canary segment gets subsets of the recent changes reverted, an always-valid sequential test reads each probe, and a Bayesian planner (which also catches two changes that only break together, and "it was not a flag") picks the next subset. A person approves the envelope before anything changes in Flagsmith, and a second person approves restoring the culprit for everyone.
+
+Run against a real self-hosted Flagsmith: six changes, culprit `new_tax_engine` named at 99.1% in 4 probes plus a confirmation, restored by two people, read back from Flagsmith, failure rate back to baseline, no segment left behind ([run log](docs/RUN_LOG.md#incident-bisect-against-a-real-flagsmith-2026-11-27)). Guide: [`docs/guides/BISECT.md`](docs/guides/BISECT.md).
+
+![Incident Room on a real Flagsmith: culprit confirmed, five innocent changes kept](docs/screenshots/live-incident-resolved-dark.png)
+
+---
+
 ![Dual Verdict Room: a conversion winner that breaches reliability guardrails](docs/screenshots/05-verdict-dangerous-winner.png)
 
 ## What you get
 
 | Screen | What it does |
 |---|---|
+| **Incident Room** | The bisection swarm, live (streamed): suspects with prior and posterior odds, every canary probe and verdict, the two human gates, the agents' feed. |
 | **Command Center** | Flagsmith connection health, experiments by state, alerts, telemetry volume (real and simulated kept apart), recent control actions. |
 | **Experiment Trial Board** | Plans (hypothesis, variants, metric, acceptance criteria, owner, approval) in eight columns **derived from backend state**: Flagsmith status, bench results, guardrails. |
 | **Variant Bench** | A nine-test Playwright acceptance suite run against `control`, `upi_first` and `one_tap`, with controlled fault injection and screenshot comparison. |
@@ -72,7 +83,9 @@ The **Decision Ledger** (`#/ledger`) remembers what was known and who decided wh
 | Command | Purpose |
 |---|---|
 | `npm run check` | typecheck + lint + every test |
-| `npm test` | 299 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
+| `node scripts/storefront.ts --auto` | live incident against a real Flagsmith (creates flags, changes them, drives traffic through Flagsmith's SDK endpoint) |
+| `node scripts/bisect-bench.ts` | planner accuracy and probe counts on seeded synthetic incidents |
+| `npm test` | 321 tests (unit, API integration, CLI, surfaces, end to end, Playwright UI) |
 | `npm run vs -- contract validate --file examples/checkout-journey.contract.yaml` | validate a contract manifest (also `register`, `check`, `report`) |
 | `npm run mcp` | MCP server on stdio (set `VARIANTSHIELD_MCP_TOKEN`) |
 | `npm run vs -- ledger verify` | verify the decision ledger (`--file export.json --expect-head <hash>` for an offline check) |
@@ -95,7 +108,8 @@ The full, dated record of what was executed against a real Flagsmith (commands, 
 | Check | Result |
 |---|---|
 | `tsc --noEmit` (strict), `eslint` | pass |
-| 299 automated tests (`npm run check`, exit 0) | pass: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, ledger API 34, MCP 11, cross-browser smoke 2, ledger UI journey 1, CLI 14, surfaces 8, contract UI journey 1 (includes the Integration page) |
+| Incident Bisect against a **real Flagsmith** | culprit found and confirmed in 5 probes, two-person remediation read back, resolved, no segment left ([run log](docs/RUN_LOG.md#incident-bisect-against-a-real-flagsmith-2026-11-27)) |
+| 321 automated tests (`npm run check`, exit 0) | pass, including bisect engine 15, swarm API 7 (one against the Flagsmith double end to end), Incident Room browser journey with two people; earlier: Phase 1 suites plus contracts 49, adapter 27, contract API 31, security API 27, ledger API 34, MCP 11, cross-browser smoke 2, ledger UI journey 1, CLI 14, surfaces 8, contract UI journey 1 (includes the Integration page) |
 | Contract demo (`scripts/contract-demo.ts`) | passes all three phases against a **real Flagsmith** in production mode with per-surface keys (16 customers re-verified against Flagsmith) |
 | Assignment-config drift on real Flagsmith | **run live**: changing the running experiment's weights moved the fingerprint `2b5fc810...` to `acfe9129...`, one drift record; restoring returned it |
 | Environment mismatch live | **run live** with a second real Flagsmith environment: `ENVIRONMENT_MISMATCH` raised from the differing fingerprints |
@@ -122,7 +136,7 @@ The full, dated record of what was executed against a real Flagsmith (commands, 
 ## Layout
 
 ```
-packages/  flagsmith-adapter  telemetry  guardrail-engine  verdict
+packages/  flagsmith-adapter  telemetry  guardrail-engine  verdict  bisect
 apps/      api  dashboard  checkout-demo  variant-bench
 scripts/   simulate  verify-flagsmith  live-demo  traffic  seed-synthetic-events
 docs/      architecture  guides  upstream  screenshots

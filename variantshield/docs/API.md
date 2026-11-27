@@ -67,3 +67,18 @@ JSON everywhere. Errors: `{ "error": { "code", "message", "detail?" } }`. Auth s
 
 ## CLI
 `variantshield contract validate|register|check|report`, `variantshield contract surface-keys --contract <id>` (prints secrets), `variantshield env-fingerprint <key>`. Exit codes: 0 ok, 1 invalid or violation, 2 usage/connection/auth, 3 incomplete or no data.
+
+## Incident bisection
+
+| Method and path | Auth | Purpose |
+|---|---|---|
+| `GET /api/swarm` | admin/viewer | Agents, simulation scenarios, Flagsmith wiring |
+| `GET /api/incidents[?source=real\|simulation]` | admin/viewer | Incidents, newest first |
+| `GET /api/incidents/:id` | admin/viewer | Full view: suspects with prior/posterior, hypotheses, probes and judgements, envelope, messages, agents |
+| `POST /api/incidents/simulate` `{scenario}` | admin | Start a SIMULATION (`interaction`, `single`, `not-flags`); demo mode only |
+| `POST /api/incidents/:id/envelope` `{confirmation:"BISECT <id>", reason, canaryPercent?, maxRounds?, maxMinutes?}` | admin | Gate 1 |
+| `POST /api/incidents/:id/abort` `{reason}` | admin | Stop and remove the canary |
+| `POST /api/incidents/:id/remediation` `{action:"propose", reason}` / `{action:"approve", confirmation:"REMEDIATE <id>", reason}` | admin | Gate 2 (approver must differ from proposer) |
+| `POST /api/bisect/signals` `{signals:[{identity, ok, ts?, flags:{name:{enabled, value}}}]}` | `X-Ingest-Key` | Outcomes with the flags each request was served (1 to 1000 per call) |
+| `POST /api/flagsmith/webhook` | `X-Flagsmith-Signature` | Flagsmith `FLAG_UPDATED` webhook (404 unless `VARIANTSHIELD_FLAGSMITH_WEBHOOK_SECRET` is set) |
+| `GET /api/stream[?incident=id]` | admin/viewer (Bearer) | Server-sent events: `incident`, `message`, `tick` |

@@ -21,6 +21,8 @@ export interface FlagControl {
   applyProbe(canary: CanaryHandle, revert: Suspect[]): Promise<AppliedProbe>;
   clearProbe(canary: CanaryHandle, applied: AppliedProbe): Promise<void>;
   teardownCanary(canary: CanaryHandle): Promise<void>;
+  /** Optional: record flag changes by observing the environment (called by the runtime every few seconds). Returns changes found. */
+  watch?(nowMs: number): Promise<number>;
   /** Restores `before` for everyone in the environment, then reads it back. */
   remediate(suspects: Suspect[]): Promise<RemediationResult>;
 }

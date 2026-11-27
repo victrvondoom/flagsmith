@@ -49,7 +49,7 @@ export const bisectRoutes: Route[] = [
     method: "GET", pattern: /^\/api\/incidents$/, auth: "admin",
     handler: ({ ctx, query }) => { const s = query.get("source"); if (s && s !== "real" && s !== "simulation") throw new HttpError(400, "validation_failed", 'source must be "real" or "simulation"'); return { incidents: rt(ctx).list((s ?? undefined) as Source | undefined) }; },
   },
-  { method: "GET", pattern: /^\/api\/incidents\/(\d+)$/, auth: "admin", heavy: true, handler: ({ ctx, params }) => ({ incident: rt(ctx).view(idParam(params[0])) }) },
+  { method: "GET", pattern: /^\/api\/incidents\/(\d+)$/, auth: "admin", handler: ({ ctx, params }) => ({ incident: rt(ctx).view(idParam(params[0])) }) },
   {
     method: "POST", pattern: /^\/api\/incidents\/simulate$/, auth: "admin",
     handler: async ({ ctx, body }) => {
