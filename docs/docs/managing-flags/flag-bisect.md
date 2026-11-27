@@ -62,4 +62,7 @@ Every action is recorded in the audit log.
 - It needs traffic: the smaller the regression, the more requests each probe needs.
 - It handles one culprit or a pair of changes that only fail together. Three or more interacting changes end as
   inconclusive.
+- The swarm runs as the recurring task `run_flag_bisect_swarm` every 30 seconds. Like any recurring task, the task
+  processor disables it after four consecutive failures (for example, while the database refuses connections), and no
+  new incidents open until it is enabled again.
 - A probe can be wrong (each has a nominal 5% error rate), which is why the confirmation probe runs before anyone acts.
