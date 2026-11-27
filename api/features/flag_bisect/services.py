@@ -306,8 +306,10 @@ def ingest_experimentation_events(
         return 0
     by_minute: dict[datetime, list[tuple[datetime, Signal]]] = {}
     for _, event, identifier, timestamp in rows:
-        if not identifier or timestamp < now - LOOKBACK or timestamp > now:
+        if not identifier or timestamp < now - LOOKBACK:
             continue
+        # An SDK clock running ahead would otherwise lose the event for good.
+        timestamp = min(timestamp, now)
         signal = Signal(identifier, event == source.success_event)
         minute = timestamp.replace(second=0, microsecond=0)
         by_minute.setdefault(minute, []).append((timestamp, signal))
@@ -760,6 +762,7 @@ def _apply(incident: Incident, suspects: list[Suspect]) -> None:
                         "segment": {"id": segment_id},
                         "enabled": suspect.before_enabled,
                         "value": _flag_value(suspect.before_value),
+                        "variants": split,
                         "priority": get_next_segment_override_priority(
                             environment=incident.environment, feature=suspect.feature
                         ),

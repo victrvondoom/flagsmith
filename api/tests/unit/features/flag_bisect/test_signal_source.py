@@ -122,12 +122,13 @@ def test_ingest_experimentation_events__mixed_events__counts_outcomes_by_event_m
     counted = services.ingest_experimentation_events(source)
 
     # Then
-    assert counted == 3
+    assert counted == 4
     buckets = {
         b.minute.strftime("%H:%M"): (b.total, b.failures)
         for b in SignalBucket.objects.filter(environment=environment)
     }
-    assert buckets == {"09:58": (2, 1), "09:59": (1, 0)}
+    # The event from a clock running a minute ahead counts now, not never.
+    assert buckets == {"09:58": (2, 1), "09:59": (1, 0), "10:00": (1, 1)}
     source.refresh_from_db()
     assert source.last_event_id == last.id
     assert services.ingest_experimentation_events(source) == 0
