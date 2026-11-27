@@ -55,7 +55,7 @@ from features.flag_bisect.models import (
     Suspect,
 )
 from features.future.services import delete_segment_override, get_flag, update_flag
-from features.future.types import FlagValue
+from features.future.types import FlagValue, SegmentOverrideRequest
 from features.models import Feature
 from segments.models import Segment, SegmentManagedBy
 from segments.services import delete_segment, write_segment_rules
@@ -750,25 +750,23 @@ def _apply(incident: Incident, suspects: list[Suspect]) -> None:
     author = _author_of(incident)
     segment_id = typing.cast(int, incident.canary_segment_id)
     for suspect in suspects:
+        override: SegmentOverrideRequest = {
+            "segment": {"id": segment_id},
+            "enabled": suspect.before_enabled,
+            "value": _flag_value(suspect.before_value),
+            "priority": get_next_segment_override_priority(
+                environment=incident.environment, feature=suspect.feature
+            ),
+        }
         split = get_flag(environment=incident.environment, feature=suspect.feature)[
             "environment_default"
         ]["variants"]
+        if split:  # Only multivariate flags accept variants.
+            override["variants"] = split
         update_flag(
             environment=incident.environment,
             feature=suspect.feature,
-            changes={
-                "segment_overrides": [
-                    {
-                        "segment": {"id": segment_id},
-                        "enabled": suspect.before_enabled,
-                        "value": _flag_value(suspect.before_value),
-                        "variants": split,
-                        "priority": get_next_segment_override_priority(
-                            environment=incident.environment, feature=suspect.feature
-                        ),
-                    }
-                ]
-            },
+            changes={"segment_overrides": [override]},
             replace=False,
             author=author,
             overwrite_system_segment_overrides=True,
