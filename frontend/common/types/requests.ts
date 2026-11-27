@@ -1256,6 +1256,12 @@ export type Req = {
     incidentId: number
     action: 'propose' | 'approve'
   }
+  getFlagBisectSignalSource: { environmentId: string }
+  updateFlagBisectSignalSource: {
+    environmentId: string
+    body: { failure_event: string; success_event: string }
+  }
+  deleteFlagBisectSignalSource: { environmentId: string }
   updateExperiment: {
     environmentId: string
     experimentId: number

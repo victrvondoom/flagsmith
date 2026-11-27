@@ -3,6 +3,7 @@ import { useRouteContext } from 'components/providers/RouteContext'
 import { useGetFlagBisectIncidentsQuery } from 'common/services/useFlagBisect'
 import PageTitle from 'components/PageTitle'
 import IncidentDetail from 'components/flag-bisect/IncidentDetail'
+import SignalSourcePanel from 'components/flag-bisect/SignalSourcePanel'
 import StateBadge from 'components/flag-bisect/StateBadge'
 import './FlagBisectPage.scss'
 
@@ -73,6 +74,9 @@ const FlagBisectPage: FC = () => {
         Find which recent flag change caused a regression, without rolling back
         all of them.
       </PageTitle>
+      {!error && environmentId && (
+        <SignalSourcePanel environmentId={environmentId} />
+      )}
       {content()}
     </div>
   )

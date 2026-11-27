@@ -1663,6 +1663,12 @@ export type FlagBisectIncident = FlagBisectIncidentSummary & {
   hypotheses: { features: string[]; probability: number }[]
 }
 
+export type FlagBisectSignalSource = {
+  failure_event: string | null
+  success_event: string | null
+  events_stored_in_flagsmith: boolean
+}
+
 export type Res = {
   segments: PagedResponse<Segment>
   segment: Segment
@@ -1925,6 +1931,7 @@ export type Res = {
   experiment: Experiment
   flagBisectIncidents: PagedResponse<FlagBisectIncidentSummary>
   flagBisectIncident: FlagBisectIncident
+  flagBisectSignalSource: FlagBisectSignalSource
   experimentExposures: ExperimentExposures
   experimentBayesianResults: ExperimentBayesianResults
   metric: Metric

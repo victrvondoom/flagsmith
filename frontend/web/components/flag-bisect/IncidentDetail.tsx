@@ -94,9 +94,10 @@ const IncidentDetail: FC<{ environmentId: string; incidentId: number }> = ({
           </div>
           <div className='flag-bisect__panel'>
             <h5 className='mb-3'>Swarm trail</h5>
-            <ol className='flag-bisect__trail'>
-              {incident.messages.map((m, i) => (
-                <li key={i}>
+            <p className='text-secondary fs-small mb-2'>Newest first</p>
+            <ol className='flag-bisect__trail' reversed>
+              {[...incident.messages].reverse().map((m, i) => (
+                <li key={incident.messages.length - i}>
                   <span
                     className={`flag-bisect__agent flag-bisect__agent--${m.agent}`}
                   >

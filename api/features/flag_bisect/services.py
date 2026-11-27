@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from django.apps import apps
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Max
 from django.utils import timezone
 from flag_engine.segments.constants import ALL_RULE, PERCENTAGE_SPLIT
 from flag_engine.utils.hashing import get_hashed_percentage_for_object_ids
@@ -36,6 +36,12 @@ from audit.related_object_type import RelatedObjectType
 from core.dataclasses import AuthorData
 from core.exceptions import ChangeRequestsEnabledError
 from environments.models import Environment
+from experimentation.models import (
+    Experiment,
+    ExperimentStatus,
+    SDKExperimentationEvent,
+)
+from experimentation.warehouses.postgres import is_flagsmith_database_config
 from features.feature_segments.services import get_next_segment_override_priority
 from features.flag_bisect import engine, metrics
 from features.flag_bisect.models import (
@@ -45,6 +51,7 @@ from features.flag_bisect.models import (
     IncidentState,
     Probe,
     SignalBucket,
+    SignalSource,
     Suspect,
 )
 from features.future.services import delete_segment_override, get_flag, update_flag
@@ -65,6 +72,7 @@ SETTLE = timedelta(seconds=30)
 PROBE_TIMEOUT = timedelta(minutes=12)
 MIN_BUCKETS = 8
 MAX_SIGNALS_PER_REQUEST = 1000
+MAX_EVENTS_PER_PASS = 20_000
 
 Agent = AgentMessage.Agent
 
@@ -182,11 +190,16 @@ def in_canary(
     )
 
 
-def record_signals(environment: Environment, signals: list[Signal]) -> int:
-    """Counts outcomes per minute and, during a probe, per cohort."""
+def record_signals(
+    environment: Environment, signals: list[Signal], at: datetime | None = None
+) -> int:
+    """Counts outcomes per minute and, during a probe, per cohort.
+
+    `at` dates outcomes read after the fact; it defaults to now.
+    """
     if not signals:
         return 0
-    now = timezone.now()
+    now = at or timezone.now()
     minute = now.replace(second=0, microsecond=0)
     failures = sum(not s.ok for s in signals)
     with transaction.atomic():
@@ -228,6 +241,85 @@ def record_signals(environment: Environment, signals: list[Signal]) -> int:
     )
     metrics.flagsmith_flag_bisect_signals_total.labels(outcome="failed").inc(failures)
     return len(signals)
+
+
+def stores_events_in_flagsmith(environment: Environment) -> bool:
+    """Whether the environment's apps send Experimentation events to this Flagsmith."""
+    config = environment.warehouse_connections.values_list("config", flat=True).first()
+    return is_flagsmith_database_config(config)
+
+
+def describe_signal_source(environment: Environment) -> dict[str, typing.Any]:
+    source = SignalSource.objects.filter(environment=environment).first()
+    return {
+        "failure_event": source.failure_event if source else None,
+        "success_event": source.success_event if source else None,
+        "events_stored_in_flagsmith": stores_events_in_flagsmith(environment),
+    }
+
+
+def set_signal_source(
+    environment: Environment, failure_event: str, success_event: str
+) -> SignalSource:
+    """Saves which Experimentation events count as outcomes.
+
+    A new source reads back no further than the look-back window.
+    """
+    source = SignalSource.objects.filter(environment=environment).first()
+    if source is None:
+        older = SDKExperimentationEvent.objects.filter(
+            environment_key=environment.api_key,
+            timestamp__lt=timezone.now() - LOOKBACK,
+        ).aggregate(last=Max("id"))["last"]
+        source = SignalSource(environment=environment, last_event_id=older or 0)
+    source.failure_event = failure_event
+    source.success_event = success_event
+    source.save()
+    logger.info(
+        "signal_source.saved",
+        organisation__id=environment.project.organisation_id,
+        environment__id=environment.id,
+    )
+    return source
+
+
+def ingest_experimentation_events(
+    source: SignalSource, now: datetime | None = None
+) -> int:
+    """Counts the source's Experimentation events, oldest unread first.
+
+    Events are dated by when they happened, one minute at a time, so a minute
+    that straddles a probe's settling time counts towards neither cohort.
+    """
+    now = now or timezone.now()
+    environment = source.environment
+    rows = list(
+        SDKExperimentationEvent.objects.filter(
+            environment_key=environment.api_key,
+            event__in=(source.failure_event, source.success_event),
+            id__gt=source.last_event_id,
+        )
+        .order_by("id")
+        .values_list("id", "event", "identifier", "timestamp")[:MAX_EVENTS_PER_PASS]
+    )
+    if not rows:
+        return 0
+    by_minute: dict[datetime, list[tuple[datetime, Signal]]] = {}
+    for _, event, identifier, timestamp in rows:
+        if not identifier or timestamp < now - LOOKBACK or timestamp > now:
+            continue
+        signal = Signal(identifier, event == source.success_event)
+        minute = timestamp.replace(second=0, microsecond=0)
+        by_minute.setdefault(minute, []).append((timestamp, signal))
+    counted = 0
+    for minute in sorted(by_minute):
+        group = by_minute[minute]
+        counted += record_signals(
+            environment, [s for _, s in group], at=min(t for t, _ in group)
+        )
+    source.last_event_id = rows[-1][0]
+    source.save(update_fields=["last_event_id", "updated_at"])
+    return counted
 
 
 def _buckets(
@@ -454,11 +546,35 @@ def watch_environment(
     return incident
 
 
+def _in_experiments(
+    environment: Environment, changes: list[FlagChange]
+) -> list[FlagChange]:
+    """Changes to flags whose rollout an experiment controls; the swarm never overrides those."""
+    feature_ids = set(
+        Experiment.objects.filter(
+            environment=environment,
+            feature_id__in=[c.feature.id for c in changes],
+            status__in=(ExperimentStatus.RUNNING, ExperimentStatus.PAUSED),
+        ).values_list("feature_id", flat=True)
+    )
+    return [c for c in changes if c.feature.id in feature_ids]
+
+
 def _investigate(incident: Incident, now: datetime) -> None:
     """Archivist, Profiler and Guardian: suspects, priors and the proposed envelope."""
     changes = recent_changes(
         incident.environment, incident.onset_at - SUSPECT_WINDOW, now
     )
+    experimented = _in_experiments(incident.environment, changes)
+    if experimented:
+        _say(
+            incident,
+            Agent.ARCHIVIST,
+            "Left alone because an experiment is running on them: "
+            + ", ".join(c.feature.name for c in experimented)
+            + ". Pause or complete the experiment to include them.",
+        )
+        changes = [c for c in changes if c not in experimented]
     if not changes:
         _say(
             incident,
@@ -952,6 +1068,8 @@ def approve_remediation(incident: Incident, author: AuthorData) -> Incident:
 def run_swarm(now: datetime | None = None) -> None:
     """One pass over every environment with recent signals."""
     now = now or timezone.now()
+    for source in SignalSource.objects.select_related("environment"):
+        ingest_experimentation_events(source, now)
     environment_ids = (
         SignalBucket.objects.filter(minute__gte=now - timedelta(minutes=15))
         .values_list("environment_id", flat=True)

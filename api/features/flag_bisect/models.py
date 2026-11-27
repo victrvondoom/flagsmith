@@ -1,5 +1,7 @@
 from django.db import models
 
+from experimentation.constants import MAX_EVENT_NAME_CHARS
+
 
 class IncidentState(models.TextChoices):
     INVESTIGATING = "INVESTIGATING"
@@ -42,6 +44,25 @@ class SignalBucket(models.Model):
                 name="flag_bisect_unique_bucket_per_minute",
             )
         ]
+
+
+class SignalSource(models.Model):
+    """Reads outcomes from the Experimentation events an environment's apps already send.
+
+    Each `failure_event` counts as a failed outcome and each `success_event` as a
+    successful one, for the identity the event was sent for.
+    """
+
+    environment = models.OneToOneField(
+        "environments.Environment",
+        on_delete=models.CASCADE,
+        related_name="flag_bisect_signal_source",
+    )
+    failure_event = models.CharField(max_length=MAX_EVENT_NAME_CHARS)
+    success_event = models.CharField(max_length=MAX_EVENT_NAME_CHARS)
+    # The highest `SDKExperimentationEvent.id` already counted.
+    last_event_id = models.BigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class Incident(models.Model):

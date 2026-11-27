@@ -16,15 +16,18 @@ from rest_framework.views import APIView
 from app.pagination import CustomPagination
 from core.dataclasses import AuthorData
 from environments.authentication import EnvironmentKeyAuthentication
+from environments.models import Environment
 from environments.permissions.permissions import EnvironmentKeyPermissions
 from features.flag_bisect import services
-from features.flag_bisect.models import Incident
+from features.flag_bisect.models import Incident, SignalSource
 from features.flag_bisect.permissions import FlagBisectPermission
 from features.flag_bisect.serializers import (
     EnvelopeSerializer,
     IncidentListSerializer,
     IncidentSerializer,
     ReasonSerializer,
+    SignalSourceResponseSerializer,
+    SignalSourceSerializer,
     SignalsRequestSerializer,
 )
 
@@ -116,3 +119,34 @@ class SDKFlagBisectSignalsView(APIView):
         ]
         services.record_signals(request.environment, signals)
         return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class SignalSourceView(APIView):
+    """Which Experimentation events count as outcomes for this environment."""
+
+    permission_classes = [IsAuthenticated, FlagBisectPermission]
+
+    def _environment(self) -> Environment:
+        environment: Environment = Environment.objects.get(
+            api_key=self.kwargs["environment_api_key"]
+        )
+        return environment
+
+    @extend_schema(responses=SignalSourceResponseSerializer)
+    def get(self, request: Request, **kwargs: typing.Any) -> Response:
+        return Response(services.describe_signal_source(self._environment()))
+
+    @extend_schema(
+        request=SignalSourceSerializer, responses=SignalSourceResponseSerializer
+    )
+    def put(self, request: Request, **kwargs: typing.Any) -> Response:
+        serializer = SignalSourceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        environment = self._environment()
+        services.set_signal_source(environment, **serializer.validated_data)
+        return Response(services.describe_signal_source(environment))
+
+    @extend_schema(request=None, responses={204: None})
+    def delete(self, request: Request, **kwargs: typing.Any) -> Response:
+        SignalSource.objects.filter(environment=self._environment()).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

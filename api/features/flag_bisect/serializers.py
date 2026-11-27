@@ -2,24 +2,30 @@ import typing
 
 from rest_framework import serializers
 
+from experimentation.constants import MAX_EVENT_NAME_CHARS
 from features.flag_bisect import services
-from features.flag_bisect.models import AgentMessage, Incident, Probe, Suspect
+from features.flag_bisect.models import (
+    AgentMessage,
+    Incident,
+    Probe,
+    Suspect,
+)
 
 MAX_SIGNALS = services.MAX_SIGNALS_PER_REQUEST
 
 
-class SignalSerializer(serializers.Serializer):  # type: ignore[type-arg]
+class SignalSerializer(serializers.Serializer[dict[str, typing.Any]]):
     identifier = serializers.CharField(max_length=2000)
     ok = serializers.BooleanField()
 
 
-class SignalsRequestSerializer(serializers.Serializer):  # type: ignore[type-arg]
+class SignalsRequestSerializer(serializers.Serializer[dict[str, typing.Any]]):
     signals = serializers.ListField(
         child=SignalSerializer(), min_length=1, max_length=MAX_SIGNALS
     )
 
 
-class SuspectSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+class SuspectSerializer(serializers.ModelSerializer[Suspect]):
     feature_name = serializers.CharField(source="feature.name", read_only=True)
     posterior = serializers.SerializerMethodField()
 
@@ -42,7 +48,7 @@ class SuspectSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         return float(self.context["posteriors"].get(suspect.key, 0.0))
 
 
-class ProbeSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+class ProbeSerializer(serializers.ModelSerializer[Probe]):
     reverted_features = serializers.SerializerMethodField()
 
     class Meta:
@@ -66,13 +72,13 @@ class ProbeSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
         return [s.feature.name for s in probe.reverted.all()]
 
 
-class AgentMessageSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+class AgentMessageSerializer(serializers.ModelSerializer[AgentMessage]):
     class Meta:
         model = AgentMessage
         fields = ("agent", "text", "created_at")
 
 
-class IncidentListSerializer(serializers.ModelSerializer):  # type: ignore[type-arg]
+class IncidentListSerializer(serializers.ModelSerializer[Incident]):
     class Meta:
         model = Incident
         fields: tuple[str, ...] = (
@@ -123,11 +129,34 @@ class IncidentSerializer(IncidentListSerializer):
         ]
 
 
-class EnvelopeSerializer(serializers.Serializer):  # type: ignore[type-arg]
+class EnvelopeSerializer(serializers.Serializer[dict[str, typing.Any]]):
     canary_percent = serializers.IntegerField(min_value=1, max_value=20, required=False)
     max_rounds = serializers.IntegerField(min_value=1, max_value=20, required=False)
     max_minutes = serializers.IntegerField(min_value=5, max_value=240, required=False)
 
 
-class ReasonSerializer(serializers.Serializer):  # type: ignore[type-arg]
+class ReasonSerializer(serializers.Serializer[dict[str, typing.Any]]):
     reason = serializers.CharField(min_length=5, max_length=500)
+
+
+class SignalSourceSerializer(serializers.Serializer[dict[str, typing.Any]]):
+    failure_event = serializers.CharField(max_length=MAX_EVENT_NAME_CHARS)
+    success_event = serializers.CharField(max_length=MAX_EVENT_NAME_CHARS)
+
+    def validate(self, data: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        for field in ("failure_event", "success_event"):
+            if data[field].startswith("$"):
+                raise serializers.ValidationError(
+                    {field: "Use the name of an event your app sends."}
+                )
+        if data["failure_event"] == data["success_event"]:
+            raise serializers.ValidationError(
+                {"success_event": "Must differ from the failure event."}
+            )
+        return data
+
+
+class SignalSourceResponseSerializer(serializers.Serializer[dict[str, typing.Any]]):
+    failure_event = serializers.CharField(allow_null=True)
+    success_event = serializers.CharField(allow_null=True)
+    events_stored_in_flagsmith = serializers.BooleanField()

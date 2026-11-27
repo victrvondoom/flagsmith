@@ -36,6 +36,21 @@
     }
   }
 
+  &__source {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+
+    label {
+      display: grid;
+      gap: 4px;
+      flex: 1 1 200px;
+      margin: 0;
+      font-weight: var(--font-weight-medium);
+    }
+  }
+
   &__tabs {
     display: flex;
     gap: 8px;
@@ -133,6 +148,11 @@
     &--culprit {
       border-color: var(--color-text-danger);
       background: var(--color-surface-danger);
+
+      code {
+        color: var(--color-text-default);
+        font-weight: var(--font-weight-semibold);
+      }
     }
   }
 

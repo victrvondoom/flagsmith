@@ -8,7 +8,9 @@ const invalidate = (incidentId: number) => [
 ]
 
 export const flagBisectService = service
-  .enhanceEndpoints({ addTagTypes: ['FlagBisectIncident'] })
+  .enhanceEndpoints({
+    addTagTypes: ['FlagBisectIncident', 'FlagBisectSignalSource'],
+  })
   .injectEndpoints({
     endpoints: (builder) => ({
       abortFlagBisectIncident: builder.mutation<
@@ -31,6 +33,16 @@ export const flagBisectService = service
           body,
           method: 'POST',
           url: `environments/${environmentId}/flag-bisect/incidents/${incidentId}/approve-envelope/`,
+        }),
+      }),
+      deleteFlagBisectSignalSource: builder.mutation<
+        void,
+        Req['deleteFlagBisectSignalSource']
+      >({
+        invalidatesTags: [{ id: 'SOURCE', type: 'FlagBisectSignalSource' }],
+        query: ({ environmentId }) => ({
+          method: 'DELETE',
+          url: `environments/${environmentId}/flag-bisect/signal-source/`,
         }),
       }),
       flagBisectRemediation: builder.mutation<
@@ -63,13 +75,36 @@ export const flagBisectService = service
           url: `environments/${environmentId}/flag-bisect/incidents/`,
         }),
       }),
+      getFlagBisectSignalSource: builder.query<
+        Res['flagBisectSignalSource'],
+        Req['getFlagBisectSignalSource']
+      >({
+        providesTags: [{ id: 'SOURCE', type: 'FlagBisectSignalSource' }],
+        query: ({ environmentId }) => ({
+          url: `environments/${environmentId}/flag-bisect/signal-source/`,
+        }),
+      }),
+      updateFlagBisectSignalSource: builder.mutation<
+        Res['flagBisectSignalSource'],
+        Req['updateFlagBisectSignalSource']
+      >({
+        invalidatesTags: [{ id: 'SOURCE', type: 'FlagBisectSignalSource' }],
+        query: ({ body, environmentId }) => ({
+          body,
+          method: 'PUT',
+          url: `environments/${environmentId}/flag-bisect/signal-source/`,
+        }),
+      }),
     }),
   })
 
 export const {
   useAbortFlagBisectIncidentMutation,
   useApproveFlagBisectEnvelopeMutation,
+  useDeleteFlagBisectSignalSourceMutation,
   useFlagBisectRemediationMutation,
   useGetFlagBisectIncidentQuery,
   useGetFlagBisectIncidentsQuery,
+  useGetFlagBisectSignalSourceQuery,
+  useUpdateFlagBisectSignalSourceMutation,
 } = flagBisectService
