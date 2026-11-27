@@ -31,6 +31,21 @@ The canary is a system segment named `flag-bisect-<incident>-canary`. It is dele
 
 ## Reporting outcomes
 
+Flag Bisect needs to know, for each identity, whether its requests succeed. Choose one of two ways.
+
+### From Experimentation events
+
+If your apps already send [Experimentation](/experimentation) events to
+[Flagsmith's own database](/experimentation/self-hosting#flagsmith-database), nothing else is needed. On the Flag Bisect
+page, name one event that means a request failed (for example `checkout_failed`) and one that means it succeeded (for
+example `checkout_completed`). Each swarm pass reads the new events, dates them by when they happened, and counts them
+for the identity they were sent for. A new source reads back no further than 45 minutes.
+
+The same setting is available at `PUT /api/v1/environments/<environment_api_key>/flag-bisect/signal-source/` with
+`failure_event` and `success_event`.
+
+### From your servers
+
 ```bash
 curl -X POST https://<your-flagsmith>/api/v1/flag-bisect/signals/ \
   -H "X-Environment-Key: ser.<server-key>" \
@@ -58,6 +73,8 @@ Every action is recorded in the audit log.
 ## Things to know
 
 - With change requests enabled for the environment, Flag Bisect refuses to change flags.
+- Flags in a running or paused experiment are left alone, so the swarm never competes with an experiment's rollout.
+  Pause or complete the experiment to include them.
 - Identity overrides take precedence over the canary's segment overrides.
 - It needs traffic: the smaller the regression, the more requests each probe needs.
 - It handles one culprit or a pair of changes that only fail together. Three or more interacting changes end as

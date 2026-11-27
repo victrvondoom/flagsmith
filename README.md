@@ -1,3 +1,9 @@
+> [!NOTE]
+> **This fork adds Flag Bisect**, a Toggle Wars (Track 03) entry built on open-source Flagsmith: when errors rise after
+> several flag changes, it finds the one that caused it using canary segments and Experimentation events, with a person
+> approving every change. Start with **[flag-bisect-demo/README.md](flag-bisect-demo/README.md)**. It is an independent
+> contribution, not an official Flagsmith product.
+
 [![Feature Flag, Remote Config and A/B Testing platform, Flagsmith](static-files/flagsmith-cover.png)](https://www.flagsmith.com/)
 
 [![Stars](https://img.shields.io/github/stars/flagsmith/flagsmith)](https://github.com/Flagsmith/flagsmith/stargazers)
