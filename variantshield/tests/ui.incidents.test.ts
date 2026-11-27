@@ -61,12 +61,28 @@ describe("Incident Room journey", () => {
     await alice.locator(".headline", { hasText: "recs_model" }).waitFor();
     await alice.screenshot({ path: `${SHOTS}/incident-02-identified.png`, fullPage: true });
     await alice.locator("#rem-reason").fill("Roll the recommendations model back to 2026-10");
+    // On a slow network, a read of the incident that left before the proposal can answer
+    // after it. Hold one back and release it once the next form is filled in: the page must
+    // not draw that older state over the newer one and lose what was typed.
+    const held: { release?: () => Promise<void> } = {};
+    const incidentRead = /\/api\/incidents\/\d+$/;
+    await alice.route(incidentRead, async (route) => {
+      if (held.release || route.request().method() !== "GET") return route.continue();
+      const stale = await route.fetch();
+      held.release = () => route.fulfill({ response: stale });
+    });
+    for (let waited = 0; !held.release && waited < 10_000; waited += 50) await alice.waitForTimeout(50);
+    assert.ok(held.release, "the live stream refreshed the incident");
     await alice.getByRole("button", { name: "Propose remediation" }).click();
     await alice.getByRole("heading", { name: "Second-person approval" }).waitFor();
     // The proposer cannot approve.
     const conf2 = await alice.locator("#rem-confirm").getAttribute("placeholder");
     await alice.locator("#rem-confirm").fill(conf2!);
     await alice.locator("#rem-approve-reason").fill("approving my own proposal");
+    await held.release();
+    await alice.unroute(incidentRead);
+    await alice.waitForTimeout(1_500); // long enough for the stale answer and the next refresh to draw
+    assert.equal(await alice.locator("#rem-confirm").inputValue(), conf2, "what was typed survives a late answer");
     await alice.getByRole("button", { name: "Approve and apply" }).click();
 
     await alice.getByRole("alert").filter({ hasText: "self_approval_forbidden" }).waitFor();

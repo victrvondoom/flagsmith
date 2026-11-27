@@ -47,16 +47,26 @@ export async function incidentRoom(ctx) {
   let timer = null;
   const schedule = () => { if (timer) return; timer = setTimeout(() => { timer = null; void refresh(); }, 700); };
 
+  // Refreshes overlap (the stream, the picker and every decision start one), and on a slow
+  // network an older one can answer last. Only the newest may draw, or it would replace the
+  // panel someone is typing into with an older state.
+  let latest = 0;
   async function refresh() {
+    const mine = ++latest;
     try {
       const l = await api("GET", "/api/incidents");
+      if (mine !== latest) return;
       incidents = l.incidents;
       if (!incidents.some((i) => i.id === current)) current = incidents[0]?.id ?? 0;
       fillPicker();
       if (!current) { body.replaceChildren(empty(swarm)); return; }
       const { incident } = await api("GET", `/api/incidents/${current}`);
+      if (mine !== latest) return;
       draw(incident);
-    } catch (e) { body.replaceChildren(h("div", { class: "banner bad", role: "alert" }, `Could not load the incident: ${e.message}`)); }
+    } catch (e) {
+      if (mine !== latest) return;
+      body.replaceChildren(h("div", { class: "banner bad", role: "alert" }, `Could not load the incident: ${e.message}`));
+    }
   }
 
   function draw(inc) {
