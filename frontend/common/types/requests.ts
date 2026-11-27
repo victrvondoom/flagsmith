@@ -1239,6 +1239,23 @@ export type Req = {
     }
   }
   experimentAction: { environmentId: string; experimentId: number }
+  getFlagBisectIncidents: { environmentId: string }
+  getFlagBisectIncident: { environmentId: string; incidentId: number }
+  approveFlagBisectEnvelope: {
+    environmentId: string
+    incidentId: number
+    body: { canary_percent?: number; max_rounds?: number; max_minutes?: number }
+  }
+  abortFlagBisectIncident: {
+    environmentId: string
+    incidentId: number
+    body: { reason: string }
+  }
+  flagBisectRemediation: {
+    environmentId: string
+    incidentId: number
+    action: 'propose' | 'approve'
+  }
   updateExperiment: {
     environmentId: string
     experimentId: number
