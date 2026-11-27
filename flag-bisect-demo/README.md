@@ -115,10 +115,15 @@ Follow [the API](../api/README.md) and [frontend](../frontend/README.md) guides,
   approved it.
 - Flag Bisect switched `new_tax_engine` off, read it back, and confirmed recovery. The other five changes stayed live.
   No canary segments were left behind. 67,776 requests in total.
+- A second run took its failure signal only from **Experimentation events**: simulated shoppers sent
+  `checkout_completed` and `checkout_failed` to `POST /api/v1/events`. It found `new_tax_engine` at 99.1% in five rounds
+  and resolved the same way.
 
-Screenshots of each state are in [`screenshots/`](screenshots).
+Screenshots of each state are in [`screenshots/`](screenshots). Every bug found while testing other variants and
+configurations, with its fix and regression test, is in [VERIFICATION.md](VERIFICATION.md), along with 2,592 simulated
+incidents that stress the statistics.
 
-**Tests:** 88 backend tests cover the app at 100% of lines, on Flagsmith with and without feature versioning: the
+**Tests:** 99 backend tests cover the app at 100% of lines, on Flagsmith with and without feature versioning: the
 statistics engine, every state, both human gates, the Experimentation event source and the API. Strict mypy, ruff and
 the migration check pass. The frontend passes ESLint and its unit tests.
 
