@@ -2,14 +2,20 @@
 
 **Six flags changed and checkout broke. Which one did it?**
 
-Flag Bisect is built into a self-hosted Flagsmith. When the failure rate rises after several flag changes, it finds the
-change that caused it without rolling all of them back. It reverts a few changes for a small canary of identities,
-compares the canary with everyone else, and repeats until one change (or a pair that only breaks together) explains the
-regression. A person approves before anything changes. A second person approves before the culprit is switched back for
-everyone.
+When the failure rate rises after several flag changes, Flag Bisect finds the change that caused it without rolling all
+of them back. It reverts a few changes for a small canary of identities, compares the canary with everyone else, and
+repeats until one change (or a pair that only breaks together) explains the regression. A person approves before
+anything changes. A second person approves before the culprit is switched back for everyone.
 
-It reads its failure signal from the events your app already sends to **Flagsmith Experimentation**, so there is nothing
-new to integrate.
+It comes two ways, with the same method and the same two human gates:
+
+|                     | **Beside your Flagsmith** (start here)                        | **Built into Flagsmith**                                                       |
+| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Runs with           | Any self-hosted Flagsmith, unmodified, through its public API | This repository's Flagsmith, as a new app and dashboard page                   |
+| Failure signal      | Your servers report outcomes to the sidecar                   | The events your app already sends to **Flagsmith Experimentation**, or servers |
+| Where people decide | The Incident Room at `localhost:8787`                         | A Flag Bisect page in each environment, next to Experiments                    |
+| Agents              | Read-only MCP tools in the sidecar                            | Read-only tools in Flagsmith's own MCP server                                  |
+| Extra               | Nothing to install in Flagsmith                               | Canary sized from your traffic; multivariate flags and experiments respected   |
 
 ![The swarm has confirmed the culprit and is waiting for a second person](screenshots/4-second-person.png)
 
@@ -59,9 +65,49 @@ Every step is in the incident's trail and Flagsmith's audit log.
 
 ## Try it
 
-### One command
+### Beside your Flagsmith: no fork
 
 You need Docker. From the repository root:
+
+```bash
+docker compose -f flag-bisect-demo/sidecar/compose.yaml --profile demo up
+```
+
+This starts Postgres and **Flagsmith's own published image**, unchanged. Flagsmith creates its first admin, organisation
+and project; a one-off job creates an API key for Flag Bisect; and Flag Bisect starts beside it. The `demo` profile adds
+simulated shoppers: after a healthy baseline they change six flags, and `new_tax_engine` breaks checkout.
+
+1. Open <http://localhost:8787> and sign in with the token `flag-bisect-demo-admin-token` and your name. The Incident
+   Room opens an incident within about two minutes.
+2. Approve the envelope, watch the probes, and propose the fix. Approving it needs a different name: sign in again in
+   another browser as someone else.
+3. Flagsmith itself is at <http://localhost:8000>. The link to set the admin's password is in its log:
+   `docker compose -f flag-bisect-demo/sidecar/compose.yaml logs flagsmith | grep password`.
+
+To use it with **your own** self-hosted Flagsmith, run just the sidecar and point it at Flagsmith with an organisation
+API key and the environment's key:
+
+```bash
+docker build -t flag-bisect-sidecar variantshield
+docker run -p 8787:8787 \
+  -e FLAGSMITH_URL=https://flagsmith.example.com \
+  -e FLAGSMITH_ENVIRONMENT_KEY=<environment key> \
+  -e FLAGSMITH_ADMIN_API_KEY=<organisation API key> \
+  -e VARIANTSHIELD_ADMIN_TOKEN=<a long random token> \
+  -e VARIANTSHIELD_INGEST_KEY=<a long random key for your servers> \
+  flag-bisect-sidecar
+```
+
+Your servers then report each request's outcome for its identity to `POST /api/bisect/signals` with that ingest key; see
+the [sidecar guide](../variantshield/docs/guides/BISECT.md).
+
+If a registry rate-limits you (`429 Too Many Requests`), point at another copy of the same images, for example
+`FLAGSMITH_IMAGE=mirror.gcr.io/flagsmith/flagsmith:latest`, `POSTGRES_IMAGE=mirror.gcr.io/library/postgres:15.5-alpine`
+and `NODE_IMAGE=mirror.gcr.io/library/node:22-bookworm-slim`.
+
+### Built into Flagsmith
+
+From the repository root:
 
 ```bash
 docker compose -f docker-compose.yml -f flag-bisect-demo/docker-compose.yml up --build
@@ -69,18 +115,10 @@ docker compose -f docker-compose.yml -f flag-bisect-demo/docker-compose.yml up -
 
 This is Flagsmith's own `docker-compose.yml` (Postgres, API, task processor, Experimentation events in Postgres) with
 the image built from this repository and `FLAG_BISECT_ENABLED=true`. Open <http://localhost:8000>, create your account,
-an organisation and a project.
+an organisation and a project. If a base image is rate-limited, set `NODE_IMAGE=docker.io/library/node` (or
+`WOLFI_BASE_IMAGE`); both are build arguments of the repository's `Dockerfile` with unchanged defaults.
 
-If Docker Hub or Amazon's public registry refuses the base images (for example `429 Too Many Requests`), point the build
-at another copy of the same images:
-
-```bash
-NODE_IMAGE=docker.io/library/node docker compose -f docker-compose.yml -f flag-bisect-demo/docker-compose.yml up --build
-```
-
-`NODE_IMAGE` and `WOLFI_BASE_IMAGE` are build arguments of the repository's `Dockerfile`; their defaults are unchanged.
-
-### Break checkout on purpose
+#### Break checkout on purpose
 
 1. In **Account → Keys**, create an API token, and copy the environment's client-side key from **SDK Keys**.
 2. Start the demo. It points the environment's events at Flagsmith's database, tells Flag Bisect which events mean
@@ -97,12 +135,18 @@ NODE_IMAGE=docker.io/library/node docker compose -f docker-compose.yml -f flag-b
 
 Only the Python standard library is needed. Add `--approve-envelope` to let the demo approve the envelope for you.
 
-### Without Docker
+#### Without Docker
 
 Follow [the API](../api/README.md) and [frontend](../frontend/README.md) guides, then set `FLAG_BISECT_ENABLED=true` and
 `EXPERIMENTATION_ENABLED=true` for the API and the task processor.
 
 ## What has been verified
+
+**Live, beside an unmodified Flagsmith** (the official image, started with the sidecar compose file): the demo shoppers
+broke checkout behind six flag changes, and Flag Bisect named `new_tax_engine` at 99.3%. One person proposed the fix and
+another approved it. Flagsmith now serves `new_tax_engine` off and the other five changes on, with no canary segments
+left (88,941 requests). It used all 12 rounds of its envelope: the built-in version, which sizes the canary from
+traffic, needed five.
 
 **Live, against this Flagsmith running locally** (PostgreSQL 16, the API, the task processor and the React dashboard):
 

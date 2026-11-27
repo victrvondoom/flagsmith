@@ -1,5 +1,7 @@
 # VariantShield API + dashboard, and the checkout demo (same image, different command).
-FROM node:22-bookworm-slim
+# NODE_IMAGE lets a build use another copy of the same image when Docker Hub rate-limits.
+ARG NODE_IMAGE=node:22-bookworm-slim
+FROM ${NODE_IMAGE}
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./

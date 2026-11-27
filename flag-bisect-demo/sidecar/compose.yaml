@@ -1,0 +1,119 @@
+# Flag Bisect next to an unmodified, self-hosted Flagsmith: no fork, no Flagsmith code changed.
+#
+#   docker compose -f flag-bisect-demo/sidecar/compose.yaml up
+#
+# Starts Postgres and Flagsmith's own published image, which creates its first admin,
+# organisation and project; a one-off job then creates an API key for Flag Bisect, which runs
+# beside Flagsmith and works only through Flagsmith's public API. Add `--profile demo` to also
+# start simulated shoppers that break checkout behind six flag changes.
+#
+# Local evaluation only: every secret below is a placeholder. If a registry rate-limits you,
+# point FLAGSMITH_IMAGE, POSTGRES_IMAGE or NODE_IMAGE at another copy of the same image, e.g.
+# FLAGSMITH_IMAGE=mirror.gcr.io/flagsmith/flagsmith:latest.
+
+name: flag-bisect-sidecar
+
+x-flagsmith: &flagsmith
+  image: ${FLAGSMITH_IMAGE:-docker.flagsmith.com/flagsmith/flagsmith:latest}
+  environment:
+    DATABASE_URL: postgresql://postgres:password@postgres:5432/flagsmith
+    DJANGO_ALLOWED_HOSTS: '*'
+    DJANGO_SECRET_KEY: change-me-local-only
+    FLAGSMITH_DOMAIN: localhost:8000
+    ALLOW_ADMIN_INITIATION_VIA_CLI: 'true'
+    ADMIN_EMAIL: admin@example.com
+    ORGANISATION_NAME: Flag Bisect demo
+    PROJECT_NAME: Checkout
+
+x-flag-bisect: &flag-bisect
+  image: flag-bisect-sidecar:local
+  build:
+    context: ../../variantshield
+    args:
+      NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+  volumes:
+    - shared:/shared:ro
+  environment: &flag-bisect-env
+    VARIANTSHIELD_ADMIN_TOKEN: flag-bisect-demo-admin-token
+    VARIANTSHIELD_INGEST_KEY: flag-bisect-demo-ingest-key
+    VARIANTSHIELD_IDENTITY_SECRET: flag-bisect-demo-identity-secret
+    VARIANTSHIELD_IDENTITY_ISSUER_KEY: flag-bisect-demo-issuer-key
+    VARIANTSHIELD_DEMO_MODE: 'false'
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:15.5-alpine}
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: flagsmith
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -d flagsmith -U postgres']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  flagsmith:
+    <<: *flagsmith
+    command: [migrate-and-serve]
+    ports:
+      - 8000:8000
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/liveness/')"
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  flagsmith-keys:
+    <<: *flagsmith
+    user: root
+    entrypoint: [flagsmith]
+    command: [shell, --command, "exec(open('/bootstrap/flagsmith_keys.py').read())"]
+    volumes:
+      - ./flagsmith_keys.py:/bootstrap/flagsmith_keys.py:ro
+      - shared:/shared
+    restart: 'no'
+    depends_on:
+      flagsmith:
+        condition: service_healthy
+
+  flag-bisect:
+    <<: *flag-bisect
+    entrypoint: [sh, -c]
+    command:
+      - set -a && . /shared/flagsmith.env && set +a && exec node --experimental-sqlite --disable-warning=ExperimentalWarning apps/api/src/main.ts
+    ports:
+      - 8787:8787
+    volumes:
+      - shared:/shared:ro
+      - flag-bisect-data:/data
+    depends_on:
+      flagsmith-keys:
+        condition: service_completed_successfully
+
+  shoppers:
+    <<: *flag-bisect
+    profiles: [demo]
+    entrypoint: [sh, -c]
+    command:
+      - set -a && . /shared/flagsmith.env && set +a && exec node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/storefront.ts
+    environment:
+      <<: *flag-bisect-env
+      VARIANTSHIELD_URL: http://flag-bisect:8787
+    depends_on:
+      flag-bisect:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  shared:
+  flag-bisect-data:
