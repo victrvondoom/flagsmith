@@ -19,7 +19,9 @@ Flag Bisect is turned off by default. Set `FLAG_BISECT_ENABLED=true` on the API 
    environment default in the two hours before it, from Flagsmith's own history (feature versions with versioning on, or
    the flag's history records without it).
 3. **An environment admin approves the envelope.** The envelope sets the canary size (1 to 20% of identities), the
-   maximum number of rounds and minutes. Nothing changes in Flagsmith until it is approved.
+   maximum number of rounds and minutes. Flag Bisect proposes the smallest canary that should decide each probe within
+   about five minutes, from the traffic since the onset and the size of the regression, and says how long a probe should
+   take, or warns when traffic is too low for any size. Nothing changes in Flagsmith until the envelope is approved.
 4. **Probes.** Each round reverts some of the changes for the canary segment only, through segment overrides. Everyone
    else keeps today's flags. After 30 seconds, outcomes are counted separately for identities inside and outside the
    segment, using the same percentage split the SDKs evaluate. A sequential test decides whether the canary healed.

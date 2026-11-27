@@ -14,7 +14,13 @@ from api_keys.models import MasterAPIKey
 from core.dataclasses import AuthorData
 from environments.models import Environment
 from features.flag_bisect import engine, services
-from features.flag_bisect.models import Incident, IncidentState, Probe, Suspect
+from features.flag_bisect.models import (
+    Incident,
+    IncidentState,
+    Probe,
+    SignalBucket,
+    Suspect,
+)
 from features.future.services import get_flag, update_flag
 from features.models import Feature
 from projects.models import Project
@@ -358,3 +364,93 @@ def test_recent_changes__v2_override_only_version__is_not_a_suspect(
 
     # Then
     assert services.recent_changes(environment, start, timezone.now()) == []
+
+
+def test_watch_environment__remediated__judges_only_complete_minutes_after_the_fix(
+    environment: Environment,
+    feature: Feature,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    # Given a fix applied at 10:00:30, after failing minutes
+    freezer.move_to("2026-11-27T10:00:30Z")
+    incident = _incident(environment, [feature], state=IncidentState.REMEDIATED)
+    incident.remediated_at = timezone.now()
+    incident.save()
+    start = timezone.now().replace(second=0)
+    for minute, (total, failures) in enumerate(
+        [(500, 45), (500, 45), (200, 2), (200, 2)], start=-1
+    ):
+        SignalBucket.objects.create(
+            environment=environment,
+            minute=start + timedelta(minutes=minute),
+            total=total,
+            failures=failures,
+        )
+
+    # When one complete minute after the fix is too little to judge
+    freezer.move_to("2026-11-27T10:02:10Z")
+    services.watch_environment(environment)
+    incident.refresh_from_db()
+    state_after_one_minute = incident.state
+
+    # And two complete minutes are enough
+    freezer.move_to("2026-11-27T10:03:10Z")
+    services.watch_environment(environment)
+    incident.refresh_from_db()
+
+    # Then the minutes that began before the fix never counted
+    assert state_after_one_minute == IncidentState.REMEDIATED
+    assert incident.state == IncidentState.RESOLVED
+    last = incident.messages.last()
+    assert last is not None
+    assert last.text == "Failure rate is back to 1.00% (baseline 1.00%)."
+
+
+@pytest.mark.parametrize(
+    "per_minute, regression_rate, percent, pace",
+    [
+        (1400, 0.09, 10, "each probe should take about 4.5 minutes."),
+        (600, 0.04, 20, "expect an inconclusive result unless traffic rises."),
+    ],
+)
+def test_investigate__traffic_since_onset__sizes_the_canary(
+    environment: Environment,
+    project: Project,
+    admin_user: FFAdminUser,
+    freezer: FrozenDateTimeFactory,
+    per_minute: int,
+    regression_rate: float,
+    percent: int,
+    pace: str,
+) -> None:
+    # Given a change, then three minutes of traffic since the onset
+    freezer.move_to("2026-11-27T10:00:00Z")
+    feature = Feature.objects.create(name="new_tax_engine", project=project)
+    freezer.tick(timedelta(seconds=1))
+    _set(environment, feature, AuthorData(user=admin_user), True, None)
+    onset = timezone.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
+    for minute in range(3):
+        SignalBucket.objects.create(
+            environment=environment,
+            minute=onset + timedelta(minutes=minute),
+            total=per_minute,
+            failures=round(per_minute * regression_rate),
+        )
+    freezer.move_to(onset + timedelta(minutes=3, seconds=5))
+    incident = Incident.objects.create(
+        environment=environment,
+        state=IncidentState.INVESTIGATING,
+        onset_at=onset,
+        baseline_rate=0.01,
+        regression_rate=regression_rate,
+    )
+
+    # When
+    services._investigate(incident, timezone.now())
+
+    # Then
+    incident.refresh_from_db()
+    guardian = incident.messages.filter(agent="guardian").get()
+    assert incident.canary_percent == percent
+    assert f"for {percent}% of identities only" in guardian.text
+    assert pace in guardian.text

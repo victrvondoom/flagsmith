@@ -6,6 +6,7 @@ import pytest
 from features.flag_bisect.engine import (
     Belief,
     Bucket,
+    CanaryAdvice,
     Change,
     Cohort,
     Hypothesis,
@@ -14,7 +15,9 @@ from features.flag_bisect.engine import (
     detect_onset,
     involvement,
     judge,
+    minutes_to_decide,
     priors,
+    recommend_canary,
     sample_ratio_mismatch,
     update,
 )
@@ -291,3 +294,42 @@ def test_bisection__regression_from_elsewhere__concludes_not_a_flag_change() -> 
 
     # Then
     assert key == "none"
+
+
+@pytest.mark.parametrize(
+    "per_minute, canary_share, expected",
+    [
+        (1400, 0.10, 4.5),
+        (1400, 0.20, 2.5),
+        (600, 0.05, None),
+    ],
+)
+def test_minutes_to_decide__expected_outcomes__returns_slower_of_both_verdicts(
+    per_minute: float, canary_share: float, expected: float | None
+) -> None:
+    # Given / When
+    minutes = minutes_to_decide(per_minute, canary_share, 0.01, 0.09)
+
+    # Then
+    assert minutes == expected
+
+
+@pytest.mark.parametrize(
+    "per_minute, regression_rate, expected",
+    [
+        # Enough traffic: the smallest canary that decides within five minutes.
+        (1400, 0.09, CanaryAdvice(10, 4.5)),
+        # The largest canary is still slower than the target: say how slow.
+        (600, 0.09, CanaryAdvice(20, 5.5)),
+        # Too little traffic for this regression at any size.
+        (600, 0.04, CanaryAdvice(20, None)),
+    ],
+)
+def test_recommend_canary__traffic_and_regression__sizes_the_canary(
+    per_minute: float, regression_rate: float, expected: CanaryAdvice
+) -> None:
+    # Given / When
+    advice = recommend_canary(per_minute, 0.01, regression_rate)
+
+    # Then
+    assert advice == expected

@@ -402,3 +402,68 @@ def sample_ratio_mismatch(canary_n: int, total_n: int, expected_share: float) ->
         (total_n - canary_n) - expected_main
     ) ** 2 / expected_main
     return chi2 > 10.83
+
+
+def minutes_to_decide(
+    per_minute: float,
+    canary_share: float,
+    baseline_rate: float,
+    regression_rate: float,
+    step_minutes: float = 0.5,
+    limit_minutes: float = 12.0,
+) -> float | None:
+    """Minutes until the Judge decides a probe, if outcomes arrive at their expected rates.
+
+    Takes the slower of the two answers a probe can give: healed (it reverted the
+    culprit) and not healed (it did not). None if neither is reached within the limit.
+    """
+
+    def first_decision(canary_rate: float, wanted: Verdict) -> float | None:
+        minutes = 0.0
+        while minutes < limit_minutes:
+            minutes += step_minutes
+            total = per_minute * minutes
+            canary_n = round(total * canary_share)
+            main_n = round(total) - canary_n
+            verdict = judge(
+                Cohort(canary_n, round(canary_n * canary_rate)),
+                Cohort(main_n, round(main_n * regression_rate)),
+                baseline_rate,
+            ).verdict
+            if verdict == wanted:
+                return minutes
+        return None
+
+    healed = first_decision(baseline_rate, "healed")
+    not_healed = first_decision(regression_rate, "not_healed")
+    if healed is None or not_healed is None:
+        return None
+    return max(healed, not_healed)
+
+
+@dataclass(frozen=True)
+class CanaryAdvice:
+    percent: int
+    minutes: float | None  # expected minutes per probe; None if beyond the limit
+
+
+def recommend_canary(
+    per_minute: float,
+    baseline_rate: float,
+    regression_rate: float,
+    choices: tuple[int, ...] = (5, 10, 15, 20),
+    target_minutes: float = 5.0,
+) -> CanaryAdvice:
+    """The smallest canary whose probes should decide within `target_minutes`.
+
+    The largest choice when none does, with its expected minutes (or None) so a
+    person can see before approving that probes will be slow or undecided.
+    """
+    minutes: float | None = None
+    for percent in choices:
+        minutes = minutes_to_decide(
+            per_minute, percent / 100, baseline_rate, regression_rate
+        )
+        if minutes is not None and minutes <= target_minutes:
+            return CanaryAdvice(percent, minutes)
+    return CanaryAdvice(choices[-1], minutes)

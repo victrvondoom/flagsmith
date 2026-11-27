@@ -548,6 +548,18 @@ def watch_environment(
     return incident
 
 
+def _advise_canary(incident: Incident, now: datetime) -> engine.CanaryAdvice:
+    """Sizes the canary from the traffic since the onset and the size of the regression."""
+    since = incident.onset_at.replace(second=0, microsecond=0)
+    minutes = _buckets(
+        incident.environment, since, now.replace(second=0, microsecond=0)
+    )
+    per_minute = sum(b.n for b in minutes) / max(1, len(minutes))
+    return engine.recommend_canary(
+        per_minute, incident.baseline_rate, incident.regression_rate
+    )
+
+
 def _in_experiments(
     environment: Environment, changes: list[FlagChange]
 ) -> list[FlagChange]:
@@ -621,19 +633,36 @@ def _investigate(incident: Incident, now: datetime) -> None:
         )
         + ".",
     )
+    advice = _advise_canary(incident, now)
+    incident.canary_percent = advice.percent
     incident.state = IncidentState.AWAITING_APPROVAL
     incident.save()
+    if advice.minutes is None:
+        pace = (
+            " At your current traffic even this canary may not decide a probe in time;"
+            " expect an inconclusive result unless traffic rises."
+        )
+    else:
+        pace = f" At your current traffic, each probe should take about {advice.minutes:g} minutes."
     _say(
         incident,
         Agent.GUARDIAN,
         f"Proposed envelope: revert any of {len(changes)} change(s) for "
         f"{incident.canary_percent}% of identities only, at most {incident.max_rounds} rounds "
-        f"and {incident.max_minutes} minutes. Nothing changes until an environment admin approves.",
+        f"and {incident.max_minutes} minutes.{pace} "
+        "Nothing changes until an environment admin approves.",
     )
 
 
 def _check_recovery(incident: Incident, now: datetime) -> None:
-    recent = _buckets(incident.environment, now - 3 * BUCKET, now)
+    """Resolved once complete minutes after the fix are close to the baseline again.
+
+    Minutes that began before the fix still hold failing traffic, so they never count.
+    """
+    remediated_at = incident.remediated_at or incident.updated_at
+    first = remediated_at.replace(second=0, microsecond=0) + BUCKET
+    until = now.replace(second=0, microsecond=0)
+    recent = _buckets(incident.environment, max(first, until - 3 * BUCKET), until)
     total = sum(b.n for b in recent)
     failures = sum(b.failures for b in recent)
     threshold = (
@@ -643,7 +672,8 @@ def _check_recovery(incident: Incident, now: datetime) -> None:
         _say(
             incident,
             Agent.SENTINEL,
-            f"Failure rate is back to {_pct(failures / total)}.",
+            f"Failure rate is back to {_pct(failures / total)} "
+            f"(baseline {_pct(incident.baseline_rate)}).",
         )
         incident.state = IncidentState.RESOLVED
         incident.save()
@@ -1050,6 +1080,7 @@ def approve_remediation(incident: Incident, author: AuthorData) -> Incident:
     incident.remediation_approved_by = author.user
     incident.remediation_approved_by_api_key = author.api_key
     incident.remediation_result = {"restored": restored}
+    incident.remediated_at = timezone.now()
     incident.state = IncidentState.REMEDIATED
     incident.save()
     _say(
