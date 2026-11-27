@@ -740,9 +740,17 @@ def abort(incident: Incident, author: AuthorData, reason: str) -> Incident:
 
 
 def _apply(incident: Incident, suspects: list[Suspect]) -> None:
+    """Reverts each suspect's on/off state and value for the canary only.
+
+    The canary keeps the environment's current variant split, so a multivariate
+    flag serves the canary the same mix of variants as everyone else.
+    """
     author = _author_of(incident)
     segment_id = typing.cast(int, incident.canary_segment_id)
     for suspect in suspects:
+        split = get_flag(environment=incident.environment, feature=suspect.feature)[
+            "environment_default"
+        ]["variants"]
         update_flag(
             environment=incident.environment,
             feature=suspect.feature,
