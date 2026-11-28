@@ -43,7 +43,7 @@ def test_apply__multivariate_suspect__canary_keeps_the_variant_split(
 ) -> None:
     # Given a multivariate flag with this environment's own split, switched on
     environment = any_environment
-    freezer.move_to("2026-11-27T10:00:00Z")
+    # The fixture created the flag at the real time; only move forward from it.
     freezer.tick(timedelta(seconds=1))
     options = list(multivariate_feature.multivariate_options.order_by("id"))
     custom: list[Variant] = [
