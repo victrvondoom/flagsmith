@@ -1,0 +1,74 @@
+# VariantShield alongside an EXISTING self-hosted Flagsmith (see docs/guides/SELF_HOSTING.md).
+# To start Flagsmith too, use:  docker compose -f compose.with-flagsmith.yaml up --build
+# Not exercised in the authoring sandbox (no Docker daemon): the file is YAML-validated only. See docs/guides/SELF_HOSTING.md.
+#
+# Secrets: only the `variantshield` service reads the whole .env. The surfaces and the demo get only what they need, so a
+# compromised surface cannot read the admin token, the ingest key or the identity secrets.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp"]
+  pids_limit: 256
+  restart: unless-stopped
+  init: true
+services:
+  variantshield:
+    <<: *hardening
+    build: .
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      # Reaches a Flagsmith published on the Docker host; override FLAGSMITH_URL in .env for anything else.
+      FLAGSMITH_URL: ${FLAGSMITH_URL:-http://host.docker.internal:8000}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:8787:8787"]
+    volumes: [variantshield-data:/data]
+    mem_limit: 512m
+  surfaces:
+    <<: *hardening
+    build: .
+    command: ["node", "apps/surfaces/src/main.ts"]
+    environment:
+      SURFACES_HOST: 0.0.0.0
+      FLAGSMITH_URL: ${FLAGSMITH_URL:-http://host.docker.internal:8000}
+      FLAGSMITH_ENVIRONMENT_KEY: ${FLAGSMITH_ENVIRONMENT_KEY:?set FLAGSMITH_ENVIRONMENT_KEY}
+      VARIANTSHIELD_URL: http://variantshield:8787
+      # JSON map of per-surface keys from: npm run vs -- contract surface-keys --contract <id> --json
+      SURFACE_KEYS: ${SURFACE_KEYS:?set SURFACE_KEYS}
+      SURFACE_CONTROL_KEY: ${SURFACE_CONTROL_KEY:?set SURFACE_CONTROL_KEY}
+      CONTRACT_ID: ${CONTRACT_ID:-checkout-journey}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:8801-8804:8801-8804"]
+    depends_on: { variantshield: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8801/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+  checkout-demo:
+    <<: *hardening
+    build: .
+    command: ["node", "apps/checkout-demo/src/main.ts"]
+    environment:
+      DEMO_HOST: 0.0.0.0
+      DEMO_PORT: 8791
+      DEMO_ALLOW_UID_HEADER: "true"
+      FLAGSMITH_URL: ${FLAGSMITH_URL:-http://host.docker.internal:8000}
+      FLAGSMITH_ENVIRONMENT_KEY: ${FLAGSMITH_ENVIRONMENT_KEY:?set FLAGSMITH_ENVIRONMENT_KEY}
+      VARIANTSHIELD_URL: http://variantshield:8787
+      # Telemetry only: the ingest key can write /api/ingest events and cannot write contract observations.
+      VARIANTSHIELD_INGEST_KEY: ${VARIANTSHIELD_INGEST_KEY:?set VARIANTSHIELD_INGEST_KEY}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["127.0.0.1:8791:8791"]
+    depends_on: { variantshield: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8791/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 256m
+volumes:
+  variantshield-data:

@@ -1,0 +1,40 @@
+{
+  "name": "variantshield",
+  "version": "0.1.0",
+  "description": "Variant-level reliability guardrails for self-hosted Flagsmith experiments. Independent community project, not an official Flagsmith product.",
+  "license": "BSD-3-Clause",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "node --experimental-sqlite --disable-warning=ExperimentalWarning --test \"packages/**/*.test.ts\" \"apps/**/*.test.ts\" \"tests/**/*.test.ts\"",
+    "vs": "node apps/cli/src/main.ts",
+    "serve": "node --experimental-sqlite --disable-warning=ExperimentalWarning apps/api/src/main.ts",
+    "surfaces": "node apps/surfaces/src/main.ts",
+    "demo:contracts": "node scripts/contract-demo.ts",
+    "demo:checkout": "node apps/checkout-demo/src/main.ts",
+    "simulate": "node --experimental-sqlite --disable-warning=ExperimentalWarning scripts/simulate.ts",
+    "bench": "node apps/variant-bench/src/run.ts --out bench-output",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "mcp": "node apps/mcp/src/main.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "playwright": "^1.63.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.18.0"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "bin": {
+    "variantshield": "apps/cli/src/main.ts"
+  }
+}

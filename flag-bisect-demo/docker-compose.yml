@@ -1,0 +1,34 @@
+# Self-hosted Flagsmith built from this repository, with Flag Bisect turned on.
+#
+# Layered over Flagsmith's own docker-compose.yml, which already stores
+# Experimentation events in its Postgres database. Run from the repository root:
+#
+#   docker compose -f docker-compose.yml -f flag-bisect-demo/docker-compose.yml up --build
+#
+# The API, the task processor and the migration job share one image, built once
+# from the repository's Dockerfile.
+
+x-flag-bisect-image: &flag-bisect-image
+  image: flagsmith-flag-bisect:local
+  build:
+    context: .
+    target: oss-unified
+    args:
+      # Override with environment variables if a registry is rate-limited,
+      # e.g. NODE_IMAGE=docker.io/library/node
+      NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node}
+      WOLFI_BASE_IMAGE: ${WOLFI_BASE_IMAGE:-cgr.dev/chainguard/wolfi-base}
+
+services:
+  migrate-db:
+    <<: *flag-bisect-image
+
+  flagsmith:
+    <<: *flag-bisect-image
+    environment:
+      FLAG_BISECT_ENABLED: 'true'
+
+  flagsmith-task-processor:
+    <<: *flag-bisect-image
+    environment:
+      FLAG_BISECT_ENABLED: 'true'

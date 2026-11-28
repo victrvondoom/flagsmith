@@ -1,0 +1,5 @@
+node_modules
+data
+bench-output
+.env
+docs/screenshots

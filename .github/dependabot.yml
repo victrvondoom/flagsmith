@@ -1,0 +1,12 @@
+# Scoped to the independent VariantShield project only (variantshield/).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /variantshield
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies: { dependency-type: development }
+  - package-ecosystem: docker
+    directory: /variantshield
+    schedule: { interval: weekly }
